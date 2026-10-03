@@ -74,6 +74,67 @@ class PdfPipelineTests(unittest.TestCase):
         self.assertEqual(cleaner._clean_heading_text('Chapter &'), 'Chapter 4')
         self.assertEqual(cleaner._clean_heading_text('Chapter S'), 'Chapter 5')
 
+    def test_lowercase_block_continuation_is_joined_after_terminal_punctuation(self):
+        first_block = TextBlockData(
+            page_number=1,
+            block_index=0,
+            bbox=(40.0, 100.0, 500.0, 120.0),
+            lines=(),
+            text='The first block ends here.',
+            max_font_size=12.0,
+            avg_font_size=12.0,
+            bold_ratio=0.0,
+        )
+        second_block = TextBlockData(
+            page_number=1,
+            block_index=1,
+            bbox=(40.0, 125.0, 500.0, 145.0),
+            lines=(),
+            text='and this block continues the same paragraph.',
+            max_font_size=12.0,
+            avg_font_size=12.0,
+            bold_ratio=0.0,
+        )
+        document = ExtractedDocument(
+            pages=(PageData(page_number=1, width=600.0, height=800.0, text_blocks=(first_block, second_block), images=()),)
+        )
+
+        cleaned = PdfCleaner().clean(document)
+        paragraphs = [
+            item.text
+            for chapter in cleaned.chapters
+            for item in chapter.items
+            if isinstance(item, FlowTextUnit) and item.kind == 'paragraph'
+        ]
+
+        self.assertEqual(paragraphs, ['The first block ends here. and this block continues the same paragraph.'])
+
+    def test_lowercase_page_start_continuation_is_joined(self):
+        first_page = PageData(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            text_blocks=(TextBlockData(1, 0, (40.0, 100.0, 500.0, 120.0), (), 'The paragraph continues', 12.0, 12.0, 0.0),),
+            images=(),
+        )
+        second_page = PageData(
+            page_number=2,
+            width=600.0,
+            height=800.0,
+            text_blocks=(TextBlockData(2, 0, (40.0, 100.0, 500.0, 120.0), (), 'on the next page.', 12.0, 12.0, 0.0),),
+            images=(),
+        )
+
+        cleaned = PdfCleaner().clean(ExtractedDocument(pages=(first_page, second_page)))
+        paragraphs = [
+            item.text
+            for chapter in cleaned.chapters
+            for item in chapter.items
+            if isinstance(item, FlowTextUnit) and item.kind == 'paragraph'
+        ]
+
+        self.assertEqual(paragraphs, ['The paragraph continues on the next page.'])
+
 
 if __name__ == '__main__':
     unittest.main()

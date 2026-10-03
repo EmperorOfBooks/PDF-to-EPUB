@@ -21,7 +21,6 @@ def book_fixture():
     return PdfCleaner().clean(document), document
 
 
-@pytest.mark.xfail(strict=True)
 def test_paragraph_lowercase_start_ratio_is_under_phase2_target(book_fixture):
     cleaned, _ = book_fixture
     paragraphs = [item.text for chapter in cleaned.chapters for item in chapter.items if getattr(item, 'kind', None) == 'paragraph']

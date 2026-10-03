@@ -93,7 +93,21 @@ class PdfCleaner:
                             current_title = self._merge_titles(current_title, item.text)
                         current_items.append(item)
                 else:
-                    current_items.append(item)
+                    if self._can_merge_page_continuation(current_items, item):
+                        previous = current_items[-1]
+                        assert isinstance(previous, FlowTextUnit)
+                        separator = "" if previous.text.endswith("-") else " "
+                        current_items[-1] = FlowTextUnit(
+                            kind="paragraph",
+                            text=previous.text.rstrip("-") + separator + item.text,
+                            y=previous.y,
+                            page_number=previous.page_number,
+                            font_size=max(previous.font_size, item.font_size),
+                            bold_ratio=max(previous.bold_ratio, item.bold_ratio),
+                            level=previous.level,
+                        )
+                    else:
+                        current_items.append(item)
                     if isinstance(item, FlowTextUnit) and item.kind == "paragraph":
                         current_paragraph_count += 1
 
@@ -333,7 +347,7 @@ class PdfCleaner:
                 current_text = current_text[:-1] + element.text.lstrip()
                 current_font_size = max(current_font_size, element.font_size)
                 current_bold_ratio = max(current_bold_ratio, element.bold_ratio)
-            elif not current_text.endswith(TERMINAL_PUNCTUATION):
+            elif (element.text and element.text[0].islower()) or not current_text.endswith(TERMINAL_PUNCTUATION):
                 current_text = f"{current_text} {element.text}"
                 current_font_size = max(current_font_size, element.font_size)
                 current_bold_ratio = max(current_bold_ratio, element.bold_ratio)
@@ -370,6 +384,18 @@ class PdfCleaner:
             )
 
         return items
+
+    def _can_merge_page_continuation(
+        self,
+        current_items: list[FlowTextUnit | FlowImageUnit],
+        item: FlowTextUnit | FlowImageUnit,
+    ) -> bool:
+        if not isinstance(item, FlowTextUnit) or item.kind != "paragraph" or not item.text:
+            return False
+        if not item.text[0].islower() or not current_items:
+            return False
+        previous = current_items[-1]
+        return isinstance(previous, FlowTextUnit) and previous.kind == "paragraph"
 
     def _column_index_for_page(self, page: PageData, x_value: float) -> int:
         centers = sorted(
