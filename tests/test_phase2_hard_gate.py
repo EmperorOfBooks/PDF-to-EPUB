@@ -42,18 +42,23 @@ def test_junk_paragraphs_are_low_enough_for_phase2(book_fixture):
     assert len(junk) <= 2
 
 
-@pytest.mark.xfail(strict=True)
 def test_chapter_titles_have_clean_monotonic_sequence(book_fixture):
-    titles = ['Chapter 1', 'Chapter 3', 'Chapter 3', 'Chapter 5']
+    cleaned, _ = book_fixture
+    titles = [chapter.title for chapter in cleaned.chapters]
     result = detect_chapter_sequence(titles)
     assert not result['gaps']
     assert not result['duplicates']
 
 
-@pytest.mark.xfail(strict=True)
 def test_image_retention_matches_source_pdf(book_fixture):
-    source_images = 6
-    epub_images = 1
+    cleaned, document = book_fixture
+    source_images = sum(len(page.images) for page in document.pages)
+    epub_images = sum(
+        1
+        for chapter in cleaned.chapters
+        for item in chapter.items
+        if getattr(item, 'kind', None) == 'image'
+    )
     assert epub_images >= max(1, int(source_images * 0.9))
 
 

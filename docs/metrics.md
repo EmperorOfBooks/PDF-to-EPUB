@@ -15,13 +15,13 @@ The project is intentionally kept in a pre-Phase-2 state while the repo hygiene 
 | Phase 1.5 gate (current) | 4931 | 44.72% | 451 (9.14%) | 321 | 98.13% | 203 | 0 | Strict, letters-only token recall with no content fixes applied yet. |
 | Phase 2A (paragraphs + chapter order) | 1999 | 14.61% | 165 (8.25%) | 46 | 99.93% | 89 | 0 | Measured after block-level paragraph joining and targeted OCR heading normalization. |
 | Phase 2B (cross-page paragraph flow) | 1713 | 0.35% | 124 (7.24%) | 23 | 99.93% | 89 | 0 | Measured after merging lowercase paragraph continuations across page boundaries. |
-| Phase 2C (OCR page-number cleanup) | 1628 | 0.37% | 76 (4.67%) | 0 | pending | pending | pending | Measured after filtering the observed short OCR-corrupted page-number forms. |
+| Phase 2C (OCR page-number cleanup) | 1628 | 0.37% | 76 (4.67%) | 0 | 99.93% | 89 | 0 | Measured after filtering the observed short OCR-corrupted page-number forms. |
 
 Phase 2A also produced 37 total chapters, with the main narrative sequence 1 through 16 monotonic and gap-free. Source image retention remained 5/5.
 
 Phase 2B keeps the chapter sequence gap-free and reduces lowercase-start paragraphs below the 2% target.
 
-Phase 2C removes all observed OCR page-number junk and brings short paragraphs below the 5% target. The remaining explicit xfails cover synthetic chapter-sequence and image-retention scenarios pending broader fixture coverage.
+Phase 2C removes all observed OCR page-number junk and brings short paragraphs below the 5% target. Chapter sequencing and source-image retention now run as real-fixture regressions; remaining skips cover synthetic corpus, Ace, and Playwright coverage that has not been added yet.
 
 ## Current metric definitions
 
