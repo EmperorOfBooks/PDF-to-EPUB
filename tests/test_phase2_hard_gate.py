@@ -28,7 +28,6 @@ def test_paragraph_lowercase_start_ratio_is_under_phase2_target(book_fixture):
     assert stats['lowercase_start_ratio'] <= 0.02
 
 
-@pytest.mark.xfail(strict=True)
 def test_paragraph_fragmentation_is_under_phase2_target(book_fixture):
     cleaned, _ = book_fixture
     paragraphs = [item.text for chapter in cleaned.chapters for item in chapter.items if getattr(item, 'kind', None) == 'paragraph']
@@ -36,7 +35,6 @@ def test_paragraph_fragmentation_is_under_phase2_target(book_fixture):
     assert stats['under_40_chars'] <= max(1, int(len(paragraphs) * 0.05))
 
 
-@pytest.mark.xfail(strict=True)
 def test_junk_paragraphs_are_low_enough_for_phase2(book_fixture):
     cleaned, _ = book_fixture
     paragraphs = [item.text for chapter in cleaned.chapters for item in chapter.items if getattr(item, 'kind', None) == 'paragraph']

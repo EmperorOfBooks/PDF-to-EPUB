@@ -530,6 +530,8 @@ class PdfCleaner:
         compact = re.sub(r"\s+", "", text)
         if not compact:
             return True
+        if len(compact) <= 4 and re.fullmatch(r"[0-9&GS]+", compact, flags=re.IGNORECASE):
+            return True
         if re.search(r"[A-Za-z]", compact):
             return False
         if len(compact) <= 6:

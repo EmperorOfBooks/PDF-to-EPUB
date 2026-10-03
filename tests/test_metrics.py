@@ -16,7 +16,7 @@ def test_paragraph_stats_detect_fragmentation():
     assert stats['paragraph_count'] == 5
     assert stats['lowercase_start_ratio'] > 0.0
     assert 'under_40_chars' in stats
-    assert detect_junk_paragraphs(['1', '&']) == ['1', '&']
+    assert detect_junk_paragraphs(['1', '&', 'G2', '&S']) == ['1', '&', 'G2', '&S']
 
 
 def test_word_recall_tracks_vocab_drift():

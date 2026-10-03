@@ -6,7 +6,7 @@ from statistics import median
 from typing import Iterable, Sequence
 
 LETTER_TOKEN_RE = re.compile(r"[A-Za-z]{3,}")
-PAGE_NUMBER_GARBAGE_RE = re.compile(r"^(?:\d+[A-Za-z]+|[A-Za-z]+\d+|[A-Za-z]?\d+[A-Za-z]?|&[A-Za-z0-9])$", re.IGNORECASE)
+PAGE_NUMBER_GARBAGE_RE = re.compile(r"^(?:\d+[A-Za-z]+|[A-Za-z]+\d+|[A-Za-z]?\d+[A-Za-z]?|&[A-Za-z0-9]|[&GS]+)$", re.IGNORECASE)
 
 
 def normalize_paragraphs(paragraphs: Iterable[str]) -> list[str]:
