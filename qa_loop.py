@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -12,7 +13,21 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent
-INPUT_PDF = ROOT / "Book Done.pdf"
+
+
+def resolve_input_pdf() -> Path:
+    env_value = os.environ.get("BOOK_PDF")
+    if env_value:
+        candidate = Path(env_value).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+    candidate = ROOT / "Book Done.pdf"
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError("BOOK_PDF is not set and Book Done.pdf is not present in the project root.")
+
+
+INPUT_PDF = resolve_input_pdf()
 OUTPUT_EPUB = ROOT / "qa_generated.epub"
 TARGET_GENERATOR = ROOT / "epub_builder.py"
 MAX_ROUNDS = 6
@@ -51,21 +66,6 @@ def ensure_playwright():
     except Exception:
         run_cmd([sys.executable, "-m", "pip", "install", "playwright"])
     run_cmd([sys.executable, "-m", "playwright", "install", "chromium"])
-
-
-def patch_generator(kind):
-    text = TARGET_GENERATOR.read_text(encoding="utf-8")
-    if kind == "xml":
-        old = """    def _wrap_xhtml(self, title: str, body: str) -> str:\n        return (\n            '<?xml version=\"1.0\" encoding=\"utf-8\"?>'\n            '<html xmlns=\"http://www.w3.org/1999/xhtml\">'\n            f'<head><title>{html.escape(title)}</title></head>'\n            f\"<body>{body}</body>\"\n            \"</html>\"\n        )\n"""
-        new = """    def _wrap_xhtml(self, title: str, body: str) -> str:\n        return (\n            '<?xml version=\"1.0\" encoding=\"utf-8\"?>'\n            '<html xmlns=\"http://www.w3.org/1999/xhtml\">'\n            '<head>'\n            '<meta charset=\"utf-8\" />'\n            '<title>' + html.escape(title) + '</title>'\n            '<style>'\n            'html,body{margin:0;padding:0;background:#fff;color:#111;font-family:Georgia,\"Times New Roman\",serif;line-height:1.45;text-rendering:optimizeLegibility;}'\n            'body{padding:1.2em 1.1em;max-width:94%;margin:0 auto;}'\n            'h1,h2,h3{margin:1.5em 0 0.5em;line-height:1.35;page-break-before:always;page-break-inside:avoid;}'\n            'p{margin:0 0 1em;line-height:1.45;text-align:left;text-indent:0;}'\n            'img,figure{max-width:100%;height:auto;display:block;}'\n            'figure{margin:1.2em 0;}'\n            'div{margin:0.5em 0;}'\n            '</style>'\n            '</head>'\n            '<body>' + body + '</body>'\n            '</html>'\n        )\n"""
-        if old in text:
-            text = text.replace(old, new)
-    if kind == "images":
-        old = """                html_parts.append(f\"<div><img src='../{html.escape(image_file_name)}' alt='{html.escape(item.alt)}' /></div>\")\n"""
-        new = """                html_parts.append(f\"<figure><img src='../{html.escape(image_file_name)}' alt='{html.escape(item.alt)}' /></figure>\")\n"""
-        if old in text:
-            text = text.replace(old, new)
-    TARGET_GENERATOR.write_text(text, encoding="utf-8")
 
 
 def build_epub():
@@ -188,10 +188,15 @@ for file in sample_files:
 print(json.dumps(items))
 """.replace('__ROOT__', str(extracted_dir).replace('\\', '/'))
     result = run_cmd([sys.executable, "-c", script], cwd=ROOT)
+    if result.returncode != 0:
+        raise RuntimeError(f"Playwright render check failed: {result.stderr.strip() or result.stdout.strip()}")
     try:
-        return json.loads(result.stdout or "[]"), screenshot_dir
-    except Exception:
-        return [], screenshot_dir
+        payload = json.loads(result.stdout or "[]")
+        if not payload:
+            raise RuntimeError("Playwright render check returned no page metrics.")
+        return payload, screenshot_dir
+    except Exception as exc:  # pragma: no cover - explicit fail loud for QA safety
+        raise RuntimeError(f"Playwright metrics parse failed: {result.stdout.strip() or result.stderr.strip() or str(exc)}") from exc
 
 
 def visual_heuristics(metrics):
@@ -220,8 +225,6 @@ def qa_round():
         return False, "epub not created", build
     check_result, check_issues = analyze_epubcheck(OUTPUT_EPUB)
     if check_issues:
-        patch_generator("xml")
-        patch_generator("images")
         return False, "epubcheck issues: " + " | ".join(check_issues[:5]), check_result
     with tempfile.TemporaryDirectory() as tmp:
         extracted_dir = Path(tmp) / "epub"
@@ -232,8 +235,6 @@ def qa_round():
         metrics, _ = run_playwright_checks(extracted_dir)
         issues = visual_heuristics(metrics)
         if issues:
-            patch_generator("xml")
-            patch_generator("images")
             return False, "visual issues: " + " | ".join(issues[:5]), metrics
         return True, "pass", metrics
 
