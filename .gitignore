@@ -1,0 +1,11 @@
+__pycache__/
+.coverage
+.pytest_cache/
+.venv/
+*.epub
+*.log
+*.pyc
+docs/
+epubcheck/
+qa_visual/
+test_batch/
