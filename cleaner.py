@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+import ftfy
+import pyphen
+
 from config import (
     BOLD_RATIO_THRESHOLD,
     CHAPTER_PATTERNS,
@@ -72,6 +75,7 @@ class CleanedDocument:
 class PdfCleaner:
     def __init__(self, layout: LayoutAnalyzer | None = None) -> None:
         self.layout = layout or LayoutAnalyzer()
+        self.hyphenator = pyphen.Pyphen(lang="en_US")
 
     def clean(self, document: ExtractedDocument) -> CleanedDocument:
         body_font_size = self.layout.analyze(document.pages).body_font_size
@@ -546,10 +550,20 @@ class PdfCleaner:
         joined = lines[0]
         for line in lines[1:]:
             if joined.endswith("-") and line and line[0].islower():
-                joined = joined[:-1] + line
+                candidate = joined[:-1] + line
+                if self._is_dictionary_hyphenation(candidate):
+                    joined = candidate
+                else:
+                    joined = f"{joined} {line}"
             else:
                 joined = f"{joined} {line}"
         return self._normalize_text(joined)
+
+    def _is_dictionary_hyphenation(self, word: str) -> bool:
+        letters_only = re.sub(r"[^A-Za-z]", "", word)
+        if not letters_only:
+            return False
+        return self.hyphenator.inserted(letters_only) != letters_only
 
     def _is_bold(self, font_name: str, flags: int) -> bool:
         lowered = font_name.lower()
@@ -558,7 +572,7 @@ class PdfCleaner:
         return bool(flags & 16)
 
     def _normalize_text(self, text: str) -> str:
-        return re.sub(r"\s+", " ", text).strip()
+        return re.sub(r"\s+", " ", ftfy.fix_text(text)).strip()
 
     def _is_noise_text(self, text: str) -> bool:
         compact = re.sub(r"\s+", "", text)

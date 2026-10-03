@@ -5,12 +5,13 @@ from pathlib import Path
 import sys
 
 from extractor import ScannedPdfError
+from office_extractor import OfficeExtractionError
 from pipeline import ConversionPipeline
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Convert a standard book PDF into a reflowable EPUB.")
-    parser.add_argument("--input", required=True, help="Path to the source PDF")
+    parser = argparse.ArgumentParser(description="Convert PDF and office documents into reflowable EPUB3.")
+    parser.add_argument("--input", required=True, help="Path to a .pdf, .docx, .odt, .rtf, or .doc source")
     parser.add_argument("--output", required=True, help="Path to the output EPUB")
     return parser.parse_args()
 
@@ -35,6 +36,9 @@ def main() -> int:
         print(str(result))
         return 0
     except ScannedPdfError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    except OfficeExtractionError as error:
         print(str(error), file=sys.stderr)
         return 2
     except Exception as error:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 from pathlib import Path
 import re
 from typing import Iterable
 
+from PIL import Image
 import pymupdf as fitz
 
 
@@ -219,8 +221,16 @@ class PdfExtractor:
             if not smask_match:
                 return image_bytes, extension, alpha or base_pixmap.alpha, native_width, native_height
             mask_pixmap = fitz.Pixmap(self.doc, int(smask_match.group(1)))
-            composed = fitz.Pixmap(base_pixmap, mask_pixmap)
-            return composed.tobytes("png"), "png", True, native_width, native_height
+            if base_pixmap.colorspace is not None and base_pixmap.colorspace.n >= 4:
+                base_pixmap = fitz.Pixmap(fitz.csRGB, base_pixmap)
+            base_image = Image.frombytes("RGB", [base_pixmap.width, base_pixmap.height], base_pixmap.samples)
+            mask_image = Image.frombytes("L", [mask_pixmap.width, mask_pixmap.height], mask_pixmap.samples)
+            if mask_image.size != base_image.size:
+                mask_image = mask_image.resize(base_image.size, Image.Resampling.LANCZOS)
+            base_image.putalpha(mask_image)
+            buffer = io.BytesIO()
+            base_image.save(buffer, format="PNG")
+            return buffer.getvalue(), "png", True, base_image.width, base_image.height
         except (RuntimeError, ValueError, AssertionError):
             return image_bytes, extension, alpha, native_width, native_height
 

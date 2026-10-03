@@ -46,9 +46,10 @@ h1, h2, h3 {
   break-after: avoid;
 }
 
-h1 { page-break-before: always; break-before: page; }
+h1 { page-break-before: auto; break-before: auto; }
+h1.chapter-title { page-break-before: always; break-before: page; margin-top: 2em; }
 h2, h3 { page-break-before: auto; break-before: auto; page-break-after: avoid; break-after: avoid; }
-body > section:first-child h1:first-child { page-break-before: avoid; break-before: auto; }
+body > section:first-child .chapter-title:first-child { page-break-before: avoid; break-before: auto; }
 h1 + p, h2 + p, h3 + p, figure + p { text-indent: 0; }
 
 figure {
@@ -153,7 +154,7 @@ class EpubBuilder:
                         previous_heading = subtitle
                         item_index += 2
                         continue
-                    tag = "h2" if previous_heading and self._is_title_variant(previous_heading, heading_text) else "h1"
+                    tag = "h1" if item.is_chapter_heading else "h2"
                     class_attr = ' class="chapter-title"' if tag == "h1" else ""
                     html_parts.append(f"<{tag}{class_attr}>{html.escape(heading_text)}</{tag}>")
                     previous_heading = heading_text
