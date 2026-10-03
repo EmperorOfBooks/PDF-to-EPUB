@@ -2,7 +2,8 @@ import unittest
 
 from cleaner import ChapterContent, FlowImageUnit, FlowTextUnit, PdfCleaner
 from epub_builder import EPUB_CSS, EpubBuilder
-from extractor import ExtractedDocument, ImageData, PageData, TextBlockData
+from extractor import ExtractedDocument, ImageData, LineData, PageData, PdfExtractor, TextBlockData
+from layout import LayoutAnalyzer
 
 
 class PdfPipelineTests(unittest.TestCase):
@@ -67,6 +68,31 @@ class PdfPipelineTests(unittest.TestCase):
         self.assertIn('Diagram', content)
         self.assertIn('max-width: 100%', EPUB_CSS)
         self.assertIn('text-indent: 1.5em', EPUB_CSS)
+
+    def test_consecutive_headings_render_as_one_chapter_title(self):
+        chapter = ChapterContent(
+            title='Chapter 1',
+            items=(
+                FlowTextUnit(kind='heading', text='Chapter 1', y=10.0, page_number=1, font_size=18.0, bold_ratio=0.8),
+                FlowTextUnit(kind='heading', text='The Calling', y=30.0, page_number=1, font_size=16.0, bold_ratio=0.8),
+            ),
+        )
+
+        html_item, _ = EpubBuilder('out.epub')._build_chapter(1, chapter)
+        content = html_item.content.decode('utf-8')
+
+        self.assertIn('<h1 class="chapter-title">Chapter 1 <span class="subtitle">The Calling</span></h1>', content)
+
+    def test_micro_image_blocks_are_ignored(self):
+        extractor = PdfExtractor('unused.pdf')
+
+        self.assertIsNone(
+            extractor._parse_image_block(
+                1,
+                0,
+                {'image': b'not-used', 'width': 10, 'height': 10, 'ext': 'png'},
+            )
+        )
 
     def test_clean_heading_normalizes_observed_chapter_fourteen_marker(self):
         cleaner = PdfCleaner()
@@ -135,6 +161,64 @@ class PdfPipelineTests(unittest.TestCase):
         ]
 
         self.assertEqual(paragraphs, ['The paragraph continues on the next page.'])
+
+    def test_uppercase_page_start_continuation_is_joined_when_previous_is_open(self):
+        first_page = PageData(
+            page_number=1,
+            width=600.0,
+            height=800.0,
+            text_blocks=(TextBlockData(1, 0, (40.0, 100.0, 500.0, 120.0), (), 'The paragraph continues', 12.0, 12.0, 0.0),),
+            images=(),
+        )
+        second_page = PageData(
+            page_number=2,
+            width=600.0,
+            height=800.0,
+            text_blocks=(TextBlockData(2, 0, (40.0, 100.0, 500.0, 120.0), (), 'Next page continues it.', 12.0, 12.0, 0.0),),
+            images=(),
+        )
+
+        cleaned = PdfCleaner().clean(ExtractedDocument(pages=(first_page, second_page)))
+        paragraphs = [item.text for chapter in cleaned.chapters for item in chapter.items if isinstance(item, FlowTextUnit) and item.kind == 'paragraph']
+
+        self.assertEqual(paragraphs, ['The paragraph continues Next page continues it.'])
+
+    def test_wide_block_forces_single_column(self):
+        page = PageData(
+            page_number=1,
+            width=1000.0,
+            height=1200.0,
+            text_blocks=(TextBlockData(1, 0, (0.0, 100.0, 600.0, 140.0), (), 'Wide block', 12.0, 12.0, 0.0),),
+            images=(),
+        )
+
+        self.assertEqual(LayoutAnalyzer().column_index(page, 800.0), 0)
+
+    def test_single_line_body_sized_margin_block_is_artifact(self):
+        block = TextBlockData(
+            page_number=1,
+            block_index=0,
+            bbox=(40.0, 10.0, 200.0, 20.0),
+            lines=(LineData('Running head', (40.0, 10.0, 200.0, 20.0), ()),),
+            text='Running head',
+            max_font_size=12.0,
+            avg_font_size=12.0,
+            bold_ratio=0.0,
+        )
+        page = PageData(1, 600.0, 800.0, (block,), ())
+
+        self.assertTrue(LayoutAnalyzer().is_margin_artifact(page, block, 12.0))
+
+    def test_subheading_does_not_create_new_chapter_file(self):
+        blocks = (
+            TextBlockData(1, 0, (40.0, 80.0, 300.0, 100.0), (), 'Chapter 1', 18.0, 18.0, 0.8),
+            TextBlockData(1, 1, (40.0, 120.0, 300.0, 140.0), (), 'The Calling', 14.0, 14.0, 0.8),
+            TextBlockData(1, 2, (40.0, 180.0, 500.0, 220.0), (), 'Body text follows.', 12.0, 12.0, 0.0),
+        )
+        cleaned = PdfCleaner().clean(ExtractedDocument(pages=(PageData(1, 600.0, 800.0, blocks, ()),)))
+
+        self.assertEqual(len(cleaned.chapters), 1)
+        self.assertIn('The Calling', cleaned.chapters[0].title)
 
 
 if __name__ == '__main__':

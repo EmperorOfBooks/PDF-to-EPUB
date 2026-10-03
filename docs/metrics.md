@@ -17,6 +17,7 @@ The baseline numbers below preserve the honest pre-refactor state under the stri
 | Phase 2B (cross-page paragraph flow) | 1713 | 0.35% | 124 (7.24%) | 23 | 99.93% | 89 | 0 | Measured after merging lowercase paragraph continuations across page boundaries. |
 | Phase 2C (OCR page-number cleanup) | 1628 | 0.37% | 76 (4.67%) | 0 | 99.93% | 89 | 0 | Measured after filtering the observed short OCR-corrupted page-number forms. |
 | Phase 3A (modular layout/extractor/builder) | 1628 | 0.37% | 76 (4.67%) | 0 | 99.93% | 89 | 0 | Same content metrics after responsibility split; EPUBCheck and broad validation remain clean. |
+| Phase 4A (geometry, image, and heading hardening) | 1601 | 0.31% | 71 (4.43%) | 0 | 99.93% | 89 | 0 | Wide-block column handling, geometric margins, XRef image filtering, stable chapter splits, heading consolidation, and page continuation fixes. |
 
 Phase 2A also produced 37 total chapters, with the main narrative sequence 1 through 16 monotonic and gap-free. Source image retention remained 5/5.
 
@@ -25,6 +26,8 @@ Phase 2B keeps the chapter sequence gap-free and reduces lowercase-start paragra
 Phase 2C removes all observed OCR page-number junk and brings short paragraphs below the 5% target. Chapter sequencing and source-image retention now run as real-fixture regressions; remaining skips cover synthetic corpus, Ace, and Playwright coverage that has not been added yet.
 
 Phase 3A separates geometry analysis into `layout.py`, extraction contracts into `extractor.py`, and EPUB packaging into `builder.py`. `epub_builder.py` remains a compatibility shim. The generated package contains a shared stylesheet, EPUB namespace-qualified semantic sections, a generated nav document, and geometry-anchored figures.
+
+Phase 4A produces 49 total chapters with the narrative sequence 1 through 16 gap-free, retains 5/5 source images, and passes the verified EPUB and deterministic QA loop.
 
 ## Current metric definitions
 

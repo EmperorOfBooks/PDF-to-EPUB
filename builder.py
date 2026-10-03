@@ -47,6 +47,7 @@ h1, h2, h3 {
 }
 
 h1 { page-break-before: always; break-before: page; }
+h2, h3 { page-break-before: auto; break-before: auto; page-break-after: avoid; break-after: avoid; }
 body > section:first-child h1:first-child { page-break-before: avoid; break-before: auto; }
 h1 + p, h2 + p, h3 + p, figure + p { text-indent: 0; }
 
@@ -136,19 +137,34 @@ class EpubBuilder:
         previous_heading: str | None = None
         seen_images: set[str] = set()
 
-        for item in chapter.items:
+        item_index = 0
+        while item_index < len(chapter.items):
+            item = chapter.items[item_index]
             if isinstance(item, FlowTextUnit):
                 if item.kind == "heading":
                     heading_text = item.text.strip()
+                    next_item = chapter.items[item_index + 1] if item_index + 1 < len(chapter.items) else None
+                    if isinstance(next_item, FlowTextUnit) and next_item.kind == "heading":
+                        subtitle = next_item.text.strip()
+                        html_parts.append(
+                            f'<h1 class="chapter-title">{html.escape(heading_text)} '
+                            f'<span class="subtitle">{html.escape(subtitle)}</span></h1>'
+                        )
+                        previous_heading = subtitle
+                        item_index += 2
+                        continue
                     tag = "h2" if previous_heading and self._is_title_variant(previous_heading, heading_text) else "h1"
-                    html_parts.append(f"<{tag}>{html.escape(heading_text)}</{tag}>")
+                    class_attr = ' class="chapter-title"' if tag == "h1" else ""
+                    html_parts.append(f"<{tag}{class_attr}>{html.escape(heading_text)}</{tag}>")
                     previous_heading = heading_text
                 else:
                     html_parts.append(f"<p>{html.escape(item.text)}</p>")
+                item_index += 1
                 continue
 
             image_key = hashlib.sha256(item.image_bytes).hexdigest()
             if image_key in seen_images:
+                item_index += 1
                 continue
             seen_images.add(image_key)
             image_index += 1
@@ -167,6 +183,7 @@ class EpubBuilder:
             html_parts.append(
                 f'<figure class="{figure_class}"><img src="../{html.escape(image_file_name)}" alt="{alt_text}" />{caption}</figure>'
             )
+            item_index += 1
 
         if not html_parts:
             html_parts.append("<p></p>")

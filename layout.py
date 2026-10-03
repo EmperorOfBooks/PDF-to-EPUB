@@ -59,19 +59,19 @@ class LayoutAnalyzer:
         return {text for text, count in counts.items() if count >= threshold}
 
     def column_index(self, page: PageData, x_value: float) -> int:
-        centers = sorted(
-            {
-                (block.bbox[0] + block.bbox[2]) / 2.0
-                for block in page.text_blocks
-                if self.normalize(block.text)
-            }
-        )
-        if len(centers) < 2 or centers[-1] - centers[0] < max(80.0, page.width * 0.12):
+        widths = [block.bbox[2] - block.bbox[0] for block in page.text_blocks if self.normalize(block.text)]
+        if any(width > page.width * 0.55 for width in widths):
             return 0
-        for index, center in enumerate(centers):
-            if x_value < center:
-                return index
-        return len(centers) - 1
+        left_edges = sorted({block.bbox[0] for block in page.text_blocks if self.normalize(block.text)})
+        if len(left_edges) < 2 or left_edges[-1] - left_edges[0] < max(80.0, page.width * 0.12):
+            return 0
+        split = (left_edges[0] + left_edges[-1]) / 2.0
+        return 0 if x_value < split else 1
+
+    def is_margin_artifact(self, page: PageData, block: TextBlockData, body_font_size: float) -> bool:
+        if len(block.lines) != 1 or block.max_font_size > body_font_size * 1.05:
+            return False
+        return block.bbox[3] <= page.height * 0.07 or block.bbox[1] >= page.height * 0.93
 
     def ordered_blocks(self, page: PageData, blocks: Iterable[TextBlockData] | None = None) -> list[TextBlockData]:
         candidates = list(blocks if blocks is not None else page.text_blocks)

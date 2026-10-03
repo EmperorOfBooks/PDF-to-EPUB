@@ -11,7 +11,6 @@ from config import (
     PAGE_NUMBER_PATTERN,
     TERMINAL_PUNCTUATION,
     PARAGRAPH_X_TOLERANCE,
-    NON_REGEX_HEADING_SPLIT_MIN_PARAGRAPHS,
 )
 from extractor import ExtractedDocument, PageData, TextBlockData
 from layout import LayoutAnalyzer
@@ -26,6 +25,7 @@ class FlowTextUnit:
     font_size: float
     bold_ratio: float
     level: int = 0
+    is_chapter_heading: bool = False
 
 
 @dataclass(frozen=True)
@@ -54,6 +54,8 @@ class FlowLineUnit:
     font_size: float
     bold_ratio: float
     is_regex_heading: bool = False
+    bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    is_chapter_heading: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,11 +97,27 @@ class PdfCleaner:
                             current_title = item.text or current_title
                         elif current_paragraph_count == 0:
                             current_title = self._merge_titles(current_title, item.text)
-                        current_items.append(item)
+                        if current_items and current_paragraph_count == 0 and isinstance(current_items[-1], FlowTextUnit) and current_items[-1].kind == "heading":
+                            previous = current_items[-1]
+                            merged = self._merge_titles(previous.text, item.text)
+                            current_items[-1] = FlowTextUnit(
+                                kind="heading",
+                                text=merged,
+                                y=previous.y,
+                                page_number=previous.page_number,
+                                font_size=max(previous.font_size, item.font_size),
+                                bold_ratio=max(previous.bold_ratio, item.bold_ratio),
+                                level=previous.level,
+                                is_chapter_heading=previous.is_chapter_heading,
+                            )
+                            current_title = merged
+                        else:
+                            current_items.append(item)
                 else:
                     if self._can_merge_page_continuation(current_items, item):
                         previous = current_items[-1]
-                        assert isinstance(previous, FlowTextUnit)
+                        if not isinstance(previous, FlowTextUnit) or not isinstance(item, FlowTextUnit):
+                            raise AssertionError("Page continuation requires text flow units")
                         separator = "" if previous.text.endswith("-") else " "
                         current_items[-1] = FlowTextUnit(
                             kind="paragraph",
@@ -158,14 +176,14 @@ class PdfCleaner:
             normalized_block_text = self._normalize_text(block.text)
             if not normalized_block_text:
                 continue
-            if normalized_block_text in repeated_margin_texts:
+            if normalized_block_text in repeated_margin_texts or self.layout.is_margin_artifact(page, block, body_font_size):
                 continue
             if PAGE_NUMBER_PATTERN.match(normalized_block_text):
                 continue
 
-            heading_info = self._heading_info(block, body_font_size)
+            heading_info = self._heading_info(block, body_font_size, page.height)
             if heading_info is not None:
-                _, is_regex_heading = heading_info
+                _, is_regex_heading, is_chapter_heading = heading_info
                 if self._is_noise_text(normalized_block_text):
                     continue
                 elements.append(
@@ -178,6 +196,8 @@ class PdfCleaner:
                         font_size=block.max_font_size,
                         bold_ratio=block.bold_ratio,
                         is_regex_heading=is_regex_heading,
+                        bbox=block.bbox,
+                        is_chapter_heading=is_chapter_heading,
                     )
                 )
                 continue
@@ -196,6 +216,7 @@ class PdfCleaner:
                         page_number=page.page_number,
                         font_size=block.max_font_size or body_font_size,
                         bold_ratio=block.bold_ratio,
+                        bbox=block.bbox,
                     )
                 )
                 continue
@@ -212,6 +233,7 @@ class PdfCleaner:
                     page_number=page.page_number,
                     font_size=line_font_size,
                     bold_ratio=block.bold_ratio,
+                    bbox=block.bbox,
                 )
             )
 
@@ -235,10 +257,10 @@ class PdfCleaner:
         elements.sort(
             key=lambda item: (
                 item.page_number,
-                self._column_index_for_page(page, getattr(item, "x", 0.0)),
-                item.y,
+                self._column_index_for_page(page, getattr(item, "bbox", (0.0, 0.0, 0.0, 0.0))[0]),
+                getattr(item, "bbox", (0.0, 0.0, 0.0, 0.0))[1],
                 0 if getattr(item, "kind", "") == "heading" else 1,
-                getattr(item, "x", 0.0),
+                getattr(item, "bbox", (0.0, 0.0, 0.0, 0.0))[0],
             )
         )
 
@@ -249,6 +271,7 @@ class PdfCleaner:
         current_bold_ratio = 0.0
         current_page = page.page_number
         current_x = 0.0
+        current_column = 0
 
         caption_indices: set[int] = set()
         captions: dict[int, str] = {}
@@ -326,6 +349,7 @@ class PdfCleaner:
                         font_size=element.font_size,
                         bold_ratio=element.bold_ratio,
                         level=1,
+                        is_chapter_heading=element.is_chapter_heading,
                     )
                 )
                 continue
@@ -337,9 +361,11 @@ class PdfCleaner:
                 current_bold_ratio = element.bold_ratio
                 current_page = element.page_number
                 current_x = element.x
+                current_column = self._column_index_for_page(page, element.x)
                 continue
 
-            if abs(element.x - current_x) > PARAGRAPH_X_TOLERANCE and element.page_number == current_page:
+            element_column = self._column_index_for_page(page, element.x)
+            if (element_column != current_column or abs(element.x - current_x) > PARAGRAPH_X_TOLERANCE) and element.page_number == current_page:
                 items.append(
                     FlowTextUnit(
                         kind="paragraph",
@@ -357,6 +383,7 @@ class PdfCleaner:
                 current_bold_ratio = element.bold_ratio
                 current_page = element.page_number
                 current_x = element.x
+                current_column = element_column
                 continue
 
             if current_text.endswith("-") and element.text and element.text[0].islower():
@@ -408,37 +435,43 @@ class PdfCleaner:
     ) -> bool:
         if not isinstance(item, FlowTextUnit) or item.kind != "paragraph" or not item.text:
             return False
-        if not item.text[0].islower() or not current_items:
+        if not current_items:
             return False
         previous = current_items[-1]
-        return isinstance(previous, FlowTextUnit) and previous.kind == "paragraph"
+        if not isinstance(previous, FlowTextUnit) or previous.kind != "paragraph":
+            return False
+        if previous.page_number == item.page_number:
+            return False
+        text = re.sub(r"[\"'”’]+$", "", previous.text.rstrip()).rstrip()
+        return not text.endswith((".", "!", "?", ":"))
 
     def _column_index_for_page(self, page: PageData, x_value: float) -> int:
         return self.layout.column_index(page, x_value)
 
-    def _heading_info(self, block: TextBlockData, body_font_size: float) -> tuple[bool, bool] | None:
+    def _heading_info(self, block: TextBlockData, body_font_size: float, page_height: float) -> tuple[bool, bool, bool] | None:
         text = self._normalize_text(block.text)
         if not text:
             return None
         regex_heading = any(pattern.match(text) for pattern in CHAPTER_PATTERNS)
-        regex_heading = regex_heading or bool(re.match(r"^chapter\s+[&s]\b", text, flags=re.IGNORECASE))
+        regex_heading = regex_heading or bool(re.match(r"^chapter\s+[&s](?=\s|$)", text, flags=re.IGNORECASE))
         major_heading = len(text) <= 120 and (
             block.max_font_size >= body_font_size + FONT_SIZE_HEADLINE_DELTA
             or block.max_font_size >= body_font_size * FONT_SIZE_HEADLINE_MULTIPLIER
             or (len(text) <= 80 and block.bold_ratio >= BOLD_RATIO_THRESHOLD and block.max_font_size > body_font_size)
         )
         if regex_heading or major_heading:
-            return major_heading or regex_heading, regex_heading
+            chapter_heading = regex_heading or (
+                len(text) < 60
+                and block.max_font_size >= body_font_size * 1.5
+                and block.bbox[1] < page_height * 0.35
+            )
+            return major_heading or regex_heading, regex_heading, chapter_heading
         return None
 
     def _should_split_on_heading(self, heading: FlowTextUnit, current_paragraph_count: int) -> bool:
         if heading.kind != "heading":
             return False
-        if self._is_fragment_heading(heading.text):
-            return False
-        if self._looks_like_chapter_heading(heading.text):
-            return True
-        return current_paragraph_count >= NON_REGEX_HEADING_SPLIT_MIN_PARAGRAPHS
+        return heading.is_chapter_heading
 
     def _is_fragment_heading(self, text: str) -> bool:
         cleaned = self._clean_heading_text(text)
