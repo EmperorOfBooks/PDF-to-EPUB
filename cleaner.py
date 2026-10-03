@@ -1,0 +1,502 @@
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from math import ceil
+import re
+
+from config import (
+    BOLD_RATIO_THRESHOLD,
+    CHAPTER_PATTERNS,
+    FONT_SIZE_HEADLINE_DELTA,
+    FONT_SIZE_HEADLINE_MULTIPLIER,
+    HEADER_FOOTER_MARGIN_RATIO,
+    HEADER_REPEAT_RATIO,
+    MIN_HEADER_REPEAT_COUNT,
+    PAGE_NUMBER_PATTERN,
+    TERMINAL_PUNCTUATION,
+    PARAGRAPH_X_TOLERANCE,
+    NON_REGEX_HEADING_SPLIT_MIN_PARAGRAPHS,
+)
+from extractor import ExtractedDocument, PageData, TextBlockData
+
+
+@dataclass(frozen=True)
+class FlowTextUnit:
+    kind: str
+    text: str
+    y: float
+    page_number: int
+    font_size: float
+    bold_ratio: float
+    level: int = 0
+
+
+@dataclass(frozen=True)
+class FlowImageUnit:
+    kind: str
+    y: float
+    page_number: int
+    image_bytes: bytes
+    extension: str
+    alt: str
+    x: float = 0.0
+
+
+@dataclass(frozen=True)
+class FlowLineUnit:
+    kind: str
+    text: str
+    y: float
+    x: float
+    page_number: int
+    font_size: float
+    bold_ratio: float
+    is_regex_heading: bool = False
+
+
+@dataclass(frozen=True)
+class ChapterContent:
+    title: str
+    items: tuple[FlowTextUnit | FlowImageUnit, ...]
+
+
+@dataclass(frozen=True)
+class CleanedDocument:
+    chapters: tuple[ChapterContent, ...]
+
+
+class PdfCleaner:
+    def clean(self, document: ExtractedDocument) -> CleanedDocument:
+        body_font_size = self._infer_body_font_size(document)
+        repeated_margin_texts = self._detect_repeated_margin_texts(document)
+        chapters: list[ChapterContent] = []
+        current_title = "Front Matter"
+        current_items: list[FlowTextUnit | FlowImageUnit] = []
+        current_paragraph_count = 0
+
+        for page in document.pages:
+            if self._is_toc_page(page, repeated_margin_texts):
+                continue
+            for item in self._page_items(page, body_font_size, repeated_margin_texts):
+                if isinstance(item, FlowTextUnit) and item.kind == "heading":
+                    if item.text and item.text.lower() != current_title.lower() and self._should_split_on_heading(item, current_paragraph_count):
+                        if current_items:
+                            chapters.append(ChapterContent(title=current_title, items=tuple(current_items)))
+                        current_title = item.text
+                        current_items = [item]
+                        current_paragraph_count = 0
+                    else:
+                        if not current_items:
+                            current_title = item.text or current_title
+                        elif current_paragraph_count == 0:
+                            current_title = self._merge_titles(current_title, item.text)
+                        current_items.append(item)
+                else:
+                    current_items.append(item)
+                    if isinstance(item, FlowTextUnit) and item.kind == "paragraph":
+                        current_paragraph_count += 1
+
+        if current_items:
+            chapters.append(ChapterContent(title=current_title, items=tuple(current_items)))
+        if not chapters:
+            chapters.append(ChapterContent(title="Chapter 1", items=tuple()))
+        return CleanedDocument(chapters=tuple(chapters))
+
+    def _infer_body_font_size(self, document: ExtractedDocument) -> float:
+        sizes: list[float] = []
+        for page in document.pages:
+            for block in page.text_blocks:
+                for line in block.lines:
+                    for span in line.spans:
+                        if span.text.strip() and span.size > 0:
+                            sizes.append(round(span.size, 1))
+        if not sizes:
+            return 12.0
+        return float(Counter(sizes).most_common(1)[0][0])
+
+    def _detect_repeated_margin_texts(self, document: ExtractedDocument) -> set[str]:
+        counts: Counter[str] = Counter()
+        page_count = len(document.pages)
+        threshold = max(MIN_HEADER_REPEAT_COUNT, ceil(page_count * HEADER_REPEAT_RATIO))
+        for page in document.pages:
+            top_limit = page.height * HEADER_FOOTER_MARGIN_RATIO
+            bottom_limit = page.height * (1.0 - HEADER_FOOTER_MARGIN_RATIO)
+            seen_on_page: set[str] = set()
+            for block in page.text_blocks:
+                normalized = self._normalize_text(block.text)
+                if not normalized:
+                    continue
+                y0 = block.bbox[1]
+                y1 = block.bbox[3]
+                if y1 <= top_limit or y0 >= bottom_limit:
+                    if normalized not in seen_on_page:
+                        counts[normalized] += 1
+                        seen_on_page.add(normalized)
+        return {text for text, count in counts.items() if count >= threshold}
+
+    def _is_toc_page(self, page: PageData, repeated_margin_texts: set[str]) -> bool:
+        candidate_texts: list[str] = []
+        toc_like_count = 0
+        for block in page.text_blocks:
+            normalized = self._normalize_text(block.text)
+            if not normalized or normalized in repeated_margin_texts:
+                continue
+            if PAGE_NUMBER_PATTERN.match(normalized):
+                continue
+            candidate_texts.append(normalized)
+            if normalized.lower().startswith("contents") or self._looks_like_toc_entry(normalized):
+                toc_like_count += 1
+        joined_text = " ".join(candidate_texts).lower()
+        if "contents" in joined_text and len(re.findall(r"\b(?:chapter|part|appendix)\b", joined_text)) >= 3:
+            return True
+        if len(candidate_texts) < 6:
+            return False
+        return toc_like_count / len(candidate_texts) >= 0.4
+
+    def _page_items(
+        self,
+        page: PageData,
+        body_font_size: float,
+        repeated_margin_texts: set[str],
+    ) -> list[FlowTextUnit | FlowImageUnit]:
+        elements: list[FlowLineUnit | FlowImageUnit] = []
+
+        for block in page.text_blocks:
+            normalized_block_text = self._normalize_text(block.text)
+            if not normalized_block_text:
+                continue
+            if normalized_block_text in repeated_margin_texts:
+                continue
+            if PAGE_NUMBER_PATTERN.match(normalized_block_text):
+                continue
+
+            heading_info = self._heading_info(block, body_font_size)
+            if heading_info is not None:
+                _, is_regex_heading = heading_info
+                if self._is_noise_text(normalized_block_text):
+                    continue
+                elements.append(
+                    FlowLineUnit(
+                        kind="heading",
+                        text=normalized_block_text,
+                        y=block.bbox[1],
+                        x=block.bbox[0],
+                        page_number=page.page_number,
+                        font_size=block.max_font_size,
+                        bold_ratio=block.bold_ratio,
+                        is_regex_heading=is_regex_heading,
+                    )
+                )
+                continue
+
+            if block.lines:
+                for line in block.lines:
+                    normalized_line = self._normalize_text(line.text)
+                    if not normalized_line:
+                        continue
+                    if self._is_noise_text(normalized_line):
+                        continue
+                    line_font_sizes = [span.size for span in line.spans if span.text.strip() and span.size > 0]
+                    line_font_size = max(line_font_sizes) if line_font_sizes else block.max_font_size
+                    line_bold_ratio = self._line_bold_ratio(line.spans)
+                    elements.append(
+                        FlowLineUnit(
+                            kind="line",
+                            text=normalized_line,
+                            y=float(line.bbox[1]),
+                            x=float(line.bbox[0]),
+                            page_number=page.page_number,
+                            font_size=line_font_size,
+                            bold_ratio=line_bold_ratio,
+                        )
+                    )
+                continue
+
+            if self._is_noise_text(normalized_block_text):
+                continue
+            line_font_size = block.max_font_size or body_font_size
+            elements.append(
+                FlowLineUnit(
+                    kind="line",
+                    text=normalized_block_text,
+                    y=float(block.bbox[1]),
+                    x=float(block.bbox[0]),
+                    page_number=page.page_number,
+                    font_size=line_font_size,
+                    bold_ratio=block.bold_ratio,
+                )
+            )
+
+        for image in page.images:
+            elements.append(
+                FlowImageUnit(
+                    kind="image",
+                    y=(image.bbox[1] + image.bbox[3]) / 2.0,
+                    page_number=page.page_number,
+                    image_bytes=image.image_bytes,
+                    extension=image.extension,
+                    alt=image.alt,
+                    x=(image.bbox[0] + image.bbox[2]) / 2.0,
+                )
+            )
+
+        elements.sort(
+            key=lambda item: (
+                item.page_number,
+                self._column_index_for_page(page, getattr(item, "x", 0.0)),
+                item.y,
+                0 if getattr(item, "kind", "") == "heading" else 1,
+                getattr(item, "x", 0.0),
+            )
+        )
+
+        items: list[FlowTextUnit | FlowImageUnit] = []
+        current_text = ""
+        current_y = 0.0
+        current_font_size = 0.0
+        current_bold_ratio = 0.0
+        current_page = page.page_number
+        current_x = 0.0
+
+        for element in elements:
+            if isinstance(element, FlowImageUnit):
+                if current_text:
+                    items.append(
+                        FlowTextUnit(
+                            kind="paragraph",
+                            text=current_text.strip(),
+                            y=current_y,
+                            page_number=current_page,
+                            font_size=current_font_size,
+                            bold_ratio=current_bold_ratio,
+                            level=0,
+                        )
+                    )
+                    current_text = ""
+                items.append(element)
+                continue
+
+            if element.kind == "heading":
+                if current_text:
+                    items.append(
+                        FlowTextUnit(
+                            kind="paragraph",
+                            text=current_text.strip(),
+                            y=current_y,
+                            page_number=current_page,
+                            font_size=current_font_size,
+                            bold_ratio=current_bold_ratio,
+                            level=0,
+                        )
+                    )
+                    current_text = ""
+                heading_text = self._clean_heading_text(element.text)
+                items.append(
+                    FlowTextUnit(
+                        kind="heading",
+                        text=heading_text,
+                        y=element.y,
+                        page_number=element.page_number,
+                        font_size=element.font_size,
+                        bold_ratio=element.bold_ratio,
+                        level=1,
+                    )
+                )
+                continue
+
+            if not current_text:
+                current_text = element.text
+                current_y = element.y
+                current_font_size = element.font_size
+                current_bold_ratio = element.bold_ratio
+                current_page = element.page_number
+                continue
+
+            if abs(element.x - current_x) > PARAGRAPH_X_TOLERANCE and element.page_number == current_page:
+                items.append(
+                    FlowTextUnit(
+                        kind="paragraph",
+                        text=current_text.strip(),
+                        y=current_y,
+                        page_number=current_page,
+                        font_size=current_font_size,
+                        bold_ratio=current_bold_ratio,
+                        level=0,
+                    )
+                )
+                current_text = element.text
+                current_y = element.y
+                current_font_size = element.font_size
+                current_bold_ratio = element.bold_ratio
+                current_page = element.page_number
+                current_x = element.x
+                continue
+
+            if current_text.endswith("-") and element.text and element.text[0].islower():
+                current_text = current_text[:-1] + element.text.lstrip()
+                current_font_size = max(current_font_size, element.font_size)
+                current_bold_ratio = max(current_bold_ratio, element.bold_ratio)
+            elif not current_text.endswith(TERMINAL_PUNCTUATION):
+                current_text = f"{current_text} {element.text}"
+                current_font_size = max(current_font_size, element.font_size)
+                current_bold_ratio = max(current_bold_ratio, element.bold_ratio)
+            else:
+                items.append(
+                    FlowTextUnit(
+                        kind="paragraph",
+                        text=current_text.strip(),
+                        y=current_y,
+                        page_number=current_page,
+                        font_size=current_font_size,
+                        bold_ratio=current_bold_ratio,
+                        level=0,
+                    )
+                )
+                current_text = element.text
+                current_y = element.y
+                current_font_size = element.font_size
+                current_bold_ratio = element.bold_ratio
+                current_page = element.page_number
+            current_x = getattr(element, 'x', current_x)
+
+        if current_text:
+            items.append(
+                FlowTextUnit(
+                    kind="paragraph",
+                    text=current_text.strip(),
+                    y=current_y,
+                    page_number=current_page,
+                    font_size=current_font_size,
+                    bold_ratio=current_bold_ratio,
+                    level=0,
+                )
+            )
+
+        return items
+
+    def _column_index_for_page(self, page: PageData, x_value: float) -> int:
+        centers = sorted(
+            {
+                (block.bbox[0] + block.bbox[2]) / 2.0
+                for block in page.text_blocks
+                if self._normalize_text(block.text)
+            }
+        )
+        if len(centers) < 2:
+            return 0
+        spread = centers[-1] - centers[0]
+        if spread < max(80.0, page.width * 0.12):
+            return 0
+        for idx, center in enumerate(centers):
+            if x_value < center:
+                return idx
+        return len(centers) - 1
+
+    def _heading_info(self, block: TextBlockData, body_font_size: float) -> tuple[bool, bool] | None:
+        text = self._normalize_text(block.text)
+        if not text:
+            return None
+        regex_heading = any(pattern.match(text) for pattern in CHAPTER_PATTERNS)
+        major_heading = len(text) <= 120 and (
+            block.max_font_size >= body_font_size + FONT_SIZE_HEADLINE_DELTA
+            or block.max_font_size >= body_font_size * FONT_SIZE_HEADLINE_MULTIPLIER
+            or (len(text) <= 80 and block.bold_ratio >= BOLD_RATIO_THRESHOLD and block.max_font_size > body_font_size)
+        )
+        if regex_heading or major_heading:
+            return major_heading or regex_heading, regex_heading
+        return None
+
+    def _should_split_on_heading(self, heading: FlowTextUnit, current_paragraph_count: int) -> bool:
+        if heading.kind != "heading":
+            return False
+        if self._is_fragment_heading(heading.text):
+            return False
+        if self._looks_like_chapter_heading(heading.text):
+            return True
+        return current_paragraph_count >= NON_REGEX_HEADING_SPLIT_MIN_PARAGRAPHS
+
+    def _is_fragment_heading(self, text: str) -> bool:
+        cleaned = self._clean_heading_text(text)
+        if not cleaned:
+            return True
+        if self._looks_like_chapter_heading(cleaned):
+            return False
+        words = cleaned.split()
+        return len(words) <= 2 and not any(ch.isdigit() for ch in cleaned)
+
+    def _clean_heading_text(self, text: str) -> str:
+        t = text.strip()
+        t = re.sub(r"\bpg\.?\s*\d+\b$", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bpage\s*\d+\b$", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bpg\.?\s*\d+\b", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s+pg\.?\s*$", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*[:\-–—]+\s*$", "", t)
+
+        # Keep valid chapter labels but strip OCR marker noise like "Chapter &" or "Chapter S".
+        t = re.sub(r"^(chapter\s+[0-9ivxlcdm]+)\s*&\s*", r"\1 ", t, flags=re.IGNORECASE)
+        t = re.sub(r"^(chapter)\s*&\s*", r"\1 ", t, flags=re.IGNORECASE)
+        t = re.sub(r"^(chapter)\s+[A-Za-z]\s+(?=[A-Z])", r"\1 ", t, flags=re.IGNORECASE)
+
+        # Remove OCR-like ampersand artifacts around chapter numbers and titles.
+        t = re.sub(r"(?<=\d)\s*&\s*(?=[A-Za-z])", "", t)
+        t = re.sub(r"(?<=\d)\s*&\s*(?=\d)", "", t)
+        t = re.sub(r"\b&\b", " ", t)
+        t = re.sub(r"(\d)&(\d)", r"\1\2", t)
+        t = re.sub(r"(\d)&([A-Za-z])", r"\1\2", t)
+        t = re.sub(r"([A-Za-z])&(\d)", r"\1\2", t)
+
+        return self._normalize_text(t)
+
+    def _looks_like_chapter_heading(self, text: str) -> bool:
+        return any(pattern.match(text) for pattern in CHAPTER_PATTERNS)
+
+    def _looks_like_toc_entry(self, text: str) -> bool:
+        return bool(re.search(r"\.\.+\s*\d+\s*$", text) or self._looks_like_chapter_heading(text))
+
+    def _merge_titles(self, left: str, right: str) -> str:
+        if not left:
+            return right
+        if not right:
+            return left
+
+        left = self._clean_heading_text(left)
+        right = self._clean_heading_text(right)
+        left_lower = left.lower()
+        right_lower = right.lower()
+
+        if re.match(r"^(chapter|part)\s+(?:&|[a-z])\s*", left_lower):
+            return right
+        if re.match(r"^(chapter|part)\s+(?:&|[a-z])\s*", right_lower):
+            return left
+        if left_lower in right_lower:
+            return right
+        if right_lower in left_lower:
+            return left
+        return f"{left} {right}".strip()
+
+    def _line_bold_ratio(self, spans) -> float:
+        spans_list = [span for span in spans if span.text.strip()]
+        if not spans_list:
+            return 0.0
+        bold_count = sum(1 for span in spans_list if self._is_bold(span.font, span.flags))
+        return bold_count / len(spans_list)
+
+    def _is_bold(self, font_name: str, flags: int) -> bool:
+        lowered = font_name.lower()
+        if any(keyword in lowered for keyword in ("bold", "black", "heavy", "semibold", "demi")):
+            return True
+        return bool(flags & 16)
+
+    def _normalize_text(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _is_noise_text(self, text: str) -> bool:
+        compact = re.sub(r"\s+", "", text)
+        if not compact:
+            return True
+        if re.search(r"[A-Za-z]", compact):
+            return False
+        if len(compact) <= 6:
+            return True
+        return bool(re.fullmatch(r"[\W\d_]+", compact))

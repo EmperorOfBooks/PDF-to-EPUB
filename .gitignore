@@ -1,11 +1,16 @@
 __pycache__/
 .coverage
+.coverage.*
 .pytest_cache/
 .venv/
+venv/
 *.epub
+*.pdf
+*.zip
 *.log
 *.pyc
-docs/
+*.pyo
 epubcheck/
+epubcheck.zip
 qa_visual/
 test_batch/
