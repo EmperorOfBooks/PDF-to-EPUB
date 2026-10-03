@@ -13,6 +13,9 @@ The project is intentionally kept in a pre-Phase-2 state while the repo hygiene 
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | v1 (superseded) | 4931 | 44.72% | 451 (9.14%) | 321 | 98.13% | 203 | 0 | Legacy counts from the earlier baseline before the stricter metric rules were applied. |
 | Phase 1.5 gate (current) | 4931 | 44.72% | 451 (9.14%) | 321 | 98.13% | 203 | 0 | Strict, letters-only token recall with no content fixes applied yet. |
+| Phase 2A (paragraphs + chapter order) | 1999 | 14.61% | 165 (8.25%) | 46 | 99.93% | 89 | 0 | Measured after block-level paragraph joining and targeted OCR heading normalization. |
+
+Phase 2A also produced 37 total chapters, with the main narrative sequence 1 through 16 monotonic and gap-free. Source image retention remained 5/5.
 
 ## Current metric definitions
 

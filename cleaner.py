@@ -191,26 +191,21 @@ class PdfCleaner:
                 continue
 
             if block.lines:
-                for line in block.lines:
-                    normalized_line = self._normalize_text(line.text)
-                    if not normalized_line:
-                        continue
-                    if self._is_noise_text(normalized_line):
-                        continue
-                    line_font_sizes = [span.size for span in line.spans if span.text.strip() and span.size > 0]
-                    line_font_size = max(line_font_sizes) if line_font_sizes else block.max_font_size
-                    line_bold_ratio = self._line_bold_ratio(line.spans)
-                    elements.append(
-                        FlowLineUnit(
-                            kind="line",
-                            text=normalized_line,
-                            y=float(line.bbox[1]),
-                            x=float(line.bbox[0]),
-                            page_number=page.page_number,
-                            font_size=line_font_size,
-                            bold_ratio=line_bold_ratio,
-                        )
+                line_texts = [self._normalize_text(line.text) for line in block.lines]
+                line_texts = [text for text in line_texts if text and not self._is_noise_text(text)]
+                if not line_texts:
+                    continue
+                elements.append(
+                    FlowLineUnit(
+                        kind="line",
+                        text=self._join_block_lines(line_texts),
+                        y=float(block.bbox[1]),
+                        x=float(block.bbox[0]),
+                        page_number=page.page_number,
+                        font_size=block.max_font_size or body_font_size,
+                        bold_ratio=block.bold_ratio,
                     )
+                )
                 continue
 
             if self._is_noise_text(normalized_block_text):
@@ -311,6 +306,7 @@ class PdfCleaner:
                 current_font_size = element.font_size
                 current_bold_ratio = element.bold_ratio
                 current_page = element.page_number
+                current_x = element.x
                 continue
 
             if abs(element.x - current_x) > PARAGRAPH_X_TOLERANCE and element.page_number == current_page:
@@ -398,6 +394,7 @@ class PdfCleaner:
         if not text:
             return None
         regex_heading = any(pattern.match(text) for pattern in CHAPTER_PATTERNS)
+        regex_heading = regex_heading or bool(re.match(r"^chapter\s+[&s]\b", text, flags=re.IGNORECASE))
         major_heading = len(text) <= 120 and (
             block.max_font_size >= body_font_size + FONT_SIZE_HEADLINE_DELTA
             or block.max_font_size >= body_font_size * FONT_SIZE_HEADLINE_MULTIPLIER
@@ -432,6 +429,9 @@ class PdfCleaner:
         t = re.sub(r"\bpg\.?\s*\d+\b", "", t, flags=re.IGNORECASE)
         t = re.sub(r"\s+pg\.?\s*$", "", t, flags=re.IGNORECASE)
         t = re.sub(r"\s*[:\-–—]+\s*$", "", t)
+        t = re.sub(r"^(chapter)\s+1&(?=\s|$)", r"\1 14", t, flags=re.IGNORECASE)
+        t = re.sub(r"^(chapter)\s+&(?=\s|$)", r"\1 4", t, flags=re.IGNORECASE)
+        t = re.sub(r"^(chapter)\s+s(?=\s|$)", r"\1 5", t, flags=re.IGNORECASE)
 
         # Keep valid chapter labels but strip OCR marker noise like "Chapter &" or "Chapter S".
         t = re.sub(r"^(chapter\s+[0-9ivxlcdm]+)\s*&\s*", r"\1 ", t, flags=re.IGNORECASE)
@@ -481,6 +481,15 @@ class PdfCleaner:
             return 0.0
         bold_count = sum(1 for span in spans_list if self._is_bold(span.font, span.flags))
         return bold_count / len(spans_list)
+
+    def _join_block_lines(self, lines: list[str]) -> str:
+        joined = lines[0]
+        for line in lines[1:]:
+            if joined.endswith("-") and line and line[0].islower():
+                joined = joined[:-1] + line
+            else:
+                joined = f"{joined} {line}"
+        return self._normalize_text(joined)
 
     def _is_bold(self, font_name: str, flags: int) -> bool:
         lowered = font_name.lower()

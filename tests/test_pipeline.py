@@ -67,6 +67,13 @@ class PdfPipelineTests(unittest.TestCase):
         self.assertIn('max-width:100%', content)
         self.assertIn('Diagram', content)
 
+    def test_clean_heading_normalizes_observed_chapter_fourteen_marker(self):
+        cleaner = PdfCleaner()
+
+        self.assertEqual(cleaner._clean_heading_text('Chapter 1&'), 'Chapter 14')
+        self.assertEqual(cleaner._clean_heading_text('Chapter &'), 'Chapter 4')
+        self.assertEqual(cleaner._clean_heading_text('Chapter S'), 'Chapter 5')
+
 
 if __name__ == '__main__':
     unittest.main()
