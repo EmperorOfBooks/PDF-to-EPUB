@@ -1,0 +1,228 @@
+from __future__ import annotations
+
+import hashlib
+import html
+import re
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+from ebooklib import epub
+
+from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowTextUnit
+from config import DEFAULT_LANGUAGE, DEFAULT_TITLE
+
+
+EPUB_CSS = """@charset "utf-8";
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #fff;
+  color: #111;
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.45;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 5%;
+}
+
+p {
+  margin: 0;
+  text-indent: 1.5em;
+  text-align: justify;
+  hyphens: auto;
+}
+
+h1, h2, h3 {
+  text-align: left;
+  text-indent: 0;
+  margin-top: 1.8em;
+  margin-bottom: 0.6em;
+  page-break-after: avoid;
+  break-after: avoid;
+}
+
+h1 { page-break-before: always; break-before: page; }
+body > section:first-child h1:first-child { page-break-before: avoid; break-before: auto; }
+h1 + p, h2 + p, h3 + p, figure + p { text-indent: 0; }
+
+figure {
+  margin: 1.5em 0;
+  text-align: center;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+figure img, figure svg, img, svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1.5em auto;
+}
+
+figcaption {
+  font-size: 0.85em;
+  margin-top: 0.5em;
+  text-indent: 0;
+  color: #555;
+}
+
+pre, code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+"""
+
+
+@dataclass(frozen=True)
+class BuildResult:
+    output_path: Path
+
+
+class EpubBuilder:
+    def __init__(self, output_path: str | Path, title: str = DEFAULT_TITLE, language: str = DEFAULT_LANGUAGE) -> None:
+        self.output_path = Path(output_path)
+        self.title = title
+        self.language = language
+
+    def build(self, document: CleanedDocument) -> BuildResult:
+        book = epub.EpubBook()
+        book.set_identifier(self._identifier())
+        book.set_title(self.title)
+        book.set_language(self.language)
+        book.add_author("Unknown")
+        book.add_metadata("DC", "publisher", "PDF to EPUB")
+        modified = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        book.add_metadata("OPF", "meta", modified, {"property": "dcterms:modified"})
+        stylesheet = epub.EpubItem(
+            uid="book_style",
+            file_name="styles/book.css",
+            media_type="text/css",
+            content=EPUB_CSS.encode("utf-8"),
+        )
+        book.add_item(stylesheet)
+
+        epub_chapters: list[epub.EpubHtml] = []
+        toc_entries: list[epub.Link] = []
+        for chapter_index, chapter in enumerate(document.chapters, start=1):
+            html_item, image_items = self._build_chapter(chapter_index, chapter)
+            html_item.add_link(href="../styles/book.css", rel="stylesheet", type="text/css")
+            for image_item in image_items:
+                book.add_item(image_item)
+            book.add_item(html_item)
+            epub_chapters.append(html_item)
+            toc_entries.append(epub.Link(html_item.file_name, chapter.title, f"chapter_{chapter_index}"))
+
+        book.toc = tuple(toc_entries)
+        book.spine = ["nav", *epub_chapters]
+        book.add_item(epub.EpubNcx())
+        book.add_item(epub.EpubNav())
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        epub.write_epub(str(self.output_path), book)
+        return BuildResult(output_path=self.output_path)
+
+    def _build_chapter(self, chapter_index: int, chapter: ChapterContent) -> tuple[epub.EpubHtml, list[epub.EpubItem]]:
+        html_parts: list[str] = []
+        image_items: list[epub.EpubItem] = []
+        image_index = 0
+        previous_heading: str | None = None
+        seen_images: set[str] = set()
+
+        for item in chapter.items:
+            if isinstance(item, FlowTextUnit):
+                if item.kind == "heading":
+                    heading_text = item.text.strip()
+                    tag = "h2" if previous_heading and self._is_title_variant(previous_heading, heading_text) else "h1"
+                    html_parts.append(f"<{tag}>{html.escape(heading_text)}</{tag}>")
+                    previous_heading = heading_text
+                else:
+                    html_parts.append(f"<p>{html.escape(item.text)}</p>")
+                continue
+
+            image_key = hashlib.sha256(item.image_bytes).hexdigest()
+            if image_key in seen_images:
+                continue
+            seen_images.add(image_key)
+            image_index += 1
+            extension = self._normalize_extension(item.extension)
+            image_file_name = f"images/chapter_{chapter_index}_{image_index}.{extension}"
+            image_item = epub.EpubItem(
+                uid=f"image_{chapter_index}_{image_index}",
+                file_name=image_file_name,
+                media_type=self._media_type_for_extension(extension),
+                content=item.image_bytes,
+            )
+            image_items.append(image_item)
+            alt_text = html.escape(item.alt or item.caption or "Figure illustration", quote=True)
+            caption = f"<figcaption>{html.escape(item.caption)}</figcaption>" if item.caption else ""
+            figure_class = "figure-block" if item.full_width else "figure-inline"
+            html_parts.append(
+                f'<figure class="{figure_class}"><img src="../{html.escape(image_file_name)}" alt="{alt_text}" />{caption}</figure>'
+            )
+
+        if not html_parts:
+            html_parts.append("<p></p>")
+        content = self._wrap_xhtml(chapter.title, "".join(html_parts))
+        html_item = epub.EpubHtml(
+            title=chapter.title,
+            file_name=f"text/chapter_{chapter_index}.xhtml",
+            lang=self.language,
+            uid=f"chapter_{chapter_index}",
+        )
+        html_item.set_content(content.encode("utf-8"))
+        return html_item, image_items
+
+    def _wrap_xhtml(self, title: str, body: str) -> str:
+        return (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
+            "<head><meta charset=\"utf-8\" /><title>"
+            + html.escape(title)
+            + "</title></head><body><section epub:type=\"chapter\" id=\"chapter\">"
+            + body
+            + "</section></body></html>"
+        )
+
+    def _media_type_for_extension(self, extension: str) -> str:
+        return {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
+            "svg": "image/svg+xml",
+            "bmp": "image/bmp",
+        }.get(extension, "application/octet-stream")
+
+    def _normalize_extension(self, extension: str) -> str:
+        normalized = extension.lower().strip().lstrip(".")
+        return normalized or "png"
+
+    def _is_title_variant(self, left: str, right: str) -> bool:
+        left_norm = self._title_key(left)
+        right_norm = self._title_key(right)
+        if not left_norm or not right_norm:
+            return False
+        if left_norm == right_norm or left_norm in right_norm or right_norm in left_norm:
+            return True
+        left_words = set(left_norm.split())
+        right_words = set(right_norm.split())
+        return len(left_words & right_words) >= max(2, min(len(left_words), len(right_words)) - 1)
+
+    def _title_key(self, value: str) -> str:
+        text = html.unescape(value).strip().lower().replace("&", " and ")
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", text)).strip()
+
+    def _identifier(self) -> str:
+        return str(uuid.uuid4())
+
+
+Builder = EpubBuilder

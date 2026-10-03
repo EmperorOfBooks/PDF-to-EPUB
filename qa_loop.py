@@ -177,6 +177,7 @@ for file in sample_files:
         metrics = {
             'title': page.title(),
             'line_height': page.evaluate("() => getComputedStyle(document.body).lineHeight"),
+            'font_size': page.evaluate("() => getComputedStyle(document.body).fontSize"),
             'h1_break': page.evaluate("() => { const node = document.querySelector('h1') || document.body; const s = getComputedStyle(node); return s.breakBefore || s.pageBreakBefore || ''; }"),
             'img_width': page.evaluate("() => Array.from(document.images).map(i => getComputedStyle(i).maxWidth).join('|')"),
             'text_count': page.locator('p').count(),
@@ -204,8 +205,10 @@ def visual_heuristics(metrics):
     for item in metrics:
         try:
             line_height = float(str(item.get("line_height", "0")).replace("px", ""))
-            if line_height < 1.4 or line_height > 1.5:
-                issues.append(f"line-height issue: {item.get('title')} -> {line_height}")
+            font_size = float(str(item.get("font_size", "16")).replace("px", ""))
+            line_ratio = line_height / font_size if font_size else line_height
+            if line_ratio < 1.4 or line_ratio > 1.5:
+                issues.append(f"line-height issue: {item.get('title')} -> {line_ratio:.2f}")
         except Exception:
             pass
         h1_break = str(item.get("h1_break", "")).lower()

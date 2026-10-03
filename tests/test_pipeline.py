@@ -1,7 +1,7 @@
 import unittest
 
 from cleaner import ChapterContent, FlowImageUnit, FlowTextUnit, PdfCleaner
-from epub_builder import EpubBuilder
+from epub_builder import EPUB_CSS, EpubBuilder
 from extractor import ExtractedDocument, ImageData, PageData, TextBlockData
 
 
@@ -63,9 +63,10 @@ class PdfPipelineTests(unittest.TestCase):
         content = html_item.content.decode('utf-8')
 
         self.assertIn('<section', content)
-        self.assertIn('aspect-ratio', content)
-        self.assertIn('max-width:100%', content)
+        self.assertIn('<figure class="figure-inline">', content)
         self.assertIn('Diagram', content)
+        self.assertIn('max-width: 100%', EPUB_CSS)
+        self.assertIn('text-indent: 1.5em', EPUB_CSS)
 
     def test_clean_heading_normalizes_observed_chapter_fourteen_marker(self):
         cleaner = PdfCleaner()

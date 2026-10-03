@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import dataclass
-from math import ceil
 import re
 
 from config import (
@@ -10,15 +8,13 @@ from config import (
     CHAPTER_PATTERNS,
     FONT_SIZE_HEADLINE_DELTA,
     FONT_SIZE_HEADLINE_MULTIPLIER,
-    HEADER_FOOTER_MARGIN_RATIO,
-    HEADER_REPEAT_RATIO,
-    MIN_HEADER_REPEAT_COUNT,
     PAGE_NUMBER_PATTERN,
     TERMINAL_PUNCTUATION,
     PARAGRAPH_X_TOLERANCE,
     NON_REGEX_HEADING_SPLIT_MIN_PARAGRAPHS,
 )
 from extractor import ExtractedDocument, PageData, TextBlockData
+from layout import LayoutAnalyzer
 
 
 @dataclass(frozen=True)
@@ -41,6 +37,11 @@ class FlowImageUnit:
     extension: str
     alt: str
     x: float = 0.0
+    bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    native_width: int = 0
+    native_height: int = 0
+    full_width: bool = False
+    caption: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,8 +68,11 @@ class CleanedDocument:
 
 
 class PdfCleaner:
+    def __init__(self, layout: LayoutAnalyzer | None = None) -> None:
+        self.layout = layout or LayoutAnalyzer()
+
     def clean(self, document: ExtractedDocument) -> CleanedDocument:
-        body_font_size = self._infer_body_font_size(document)
+        body_font_size = self.layout.analyze(document.pages).body_font_size
         repeated_margin_texts = self._detect_repeated_margin_texts(document)
         chapters: list[ChapterContent] = []
         current_title = "Front Matter"
@@ -118,36 +122,10 @@ class PdfCleaner:
         return CleanedDocument(chapters=tuple(chapters))
 
     def _infer_body_font_size(self, document: ExtractedDocument) -> float:
-        sizes: list[float] = []
-        for page in document.pages:
-            for block in page.text_blocks:
-                for line in block.lines:
-                    for span in line.spans:
-                        if span.text.strip() and span.size > 0:
-                            sizes.append(round(span.size, 1))
-        if not sizes:
-            return 12.0
-        return float(Counter(sizes).most_common(1)[0][0])
+        return self.layout.analyze(document.pages).body_font_size
 
     def _detect_repeated_margin_texts(self, document: ExtractedDocument) -> set[str]:
-        counts: Counter[str] = Counter()
-        page_count = len(document.pages)
-        threshold = max(MIN_HEADER_REPEAT_COUNT, ceil(page_count * HEADER_REPEAT_RATIO))
-        for page in document.pages:
-            top_limit = page.height * HEADER_FOOTER_MARGIN_RATIO
-            bottom_limit = page.height * (1.0 - HEADER_FOOTER_MARGIN_RATIO)
-            seen_on_page: set[str] = set()
-            for block in page.text_blocks:
-                normalized = self._normalize_text(block.text)
-                if not normalized:
-                    continue
-                y0 = block.bbox[1]
-                y1 = block.bbox[3]
-                if y1 <= top_limit or y0 >= bottom_limit:
-                    if normalized not in seen_on_page:
-                        counts[normalized] += 1
-                        seen_on_page.add(normalized)
-        return {text for text, count in counts.items() if count >= threshold}
+        return self.layout.repeated_margin_texts(document.pages)
 
     def _is_toc_page(self, page: PageData, repeated_margin_texts: set[str]) -> bool:
         candidate_texts: list[str] = []
@@ -247,6 +225,10 @@ class PdfCleaner:
                     extension=image.extension,
                     alt=image.alt,
                     x=(image.bbox[0] + image.bbox[2]) / 2.0,
+                    bbox=image.bbox,
+                    native_width=image.native_width,
+                    native_height=image.native_height,
+                    full_width=self.layout.is_full_width_image(page, image.bbox),
                 )
             )
 
@@ -268,8 +250,42 @@ class PdfCleaner:
         current_page = page.page_number
         current_x = 0.0
 
-        for element in elements:
+        caption_indices: set[int] = set()
+        captions: dict[int, str] = {}
+        for index, element in enumerate(elements[:-1]):
+            if not isinstance(element, FlowImageUnit):
+                continue
+            candidate = elements[index + 1]
+            if not isinstance(candidate, FlowLineUnit) or candidate.kind != "line":
+                continue
+            if candidate.y < element.bbox[3] or candidate.y - element.bbox[3] > body_font_size * 2.0:
+                continue
+            if candidate.font_size > body_font_size * 0.95:
+                continue
+            if self.layout.column_index(page, candidate.x) != self.layout.column_index(page, element.x):
+                continue
+            captions[index] = candidate.text
+            caption_indices.add(index + 1)
+
+        for index, element in enumerate(elements):
+            if index in caption_indices:
+                continue
             if isinstance(element, FlowImageUnit):
+                if index in captions:
+                    element = FlowImageUnit(
+                        kind=element.kind,
+                        y=element.y,
+                        page_number=element.page_number,
+                        image_bytes=element.image_bytes,
+                        extension=element.extension,
+                        alt=element.alt,
+                        x=element.x,
+                        bbox=element.bbox,
+                        native_width=element.native_width,
+                        native_height=element.native_height,
+                        full_width=element.full_width,
+                        caption=captions[index],
+                    )
                 if current_text:
                     items.append(
                         FlowTextUnit(
@@ -398,22 +414,7 @@ class PdfCleaner:
         return isinstance(previous, FlowTextUnit) and previous.kind == "paragraph"
 
     def _column_index_for_page(self, page: PageData, x_value: float) -> int:
-        centers = sorted(
-            {
-                (block.bbox[0] + block.bbox[2]) / 2.0
-                for block in page.text_blocks
-                if self._normalize_text(block.text)
-            }
-        )
-        if len(centers) < 2:
-            return 0
-        spread = centers[-1] - centers[0]
-        if spread < max(80.0, page.width * 0.12):
-            return 0
-        for idx, center in enumerate(centers):
-            if x_value < center:
-                return idx
-        return len(centers) - 1
+        return self.layout.column_index(page, x_value)
 
     def _heading_info(self, block: TextBlockData, body_font_size: float) -> tuple[bool, bool] | None:
         text = self._normalize_text(block.text)

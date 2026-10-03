@@ -42,6 +42,10 @@ class ImageData:
     image_bytes: bytes
     extension: str
     alt: str = ""
+    native_width: int = 0
+    native_height: int = 0
+    has_alpha: bool = False
+    xref: int | None = None
 
 
 @dataclass(frozen=True)
@@ -159,14 +163,35 @@ class PdfExtractor:
         image_bytes = block.get("image")
         if not image_bytes:
             return None
+        extension = str(block.get("ext", "png"))
+        alpha = bool(block.get("alpha", 0))
+        mask_bytes = block.get("mask")
+        if isinstance(mask_bytes, bytes):
+            image_bytes, extension, alpha = self._recombine_smask(image_bytes, mask_bytes, extension)
         return ImageData(
             page_number=page_number,
             block_index=block_index,
             bbox=tuple(float(value) for value in block.get("bbox", (0, 0, 0, 0))),
             image_bytes=image_bytes,
-            extension=str(block.get("ext", "png")),
+            extension=extension,
             alt="",
+            native_width=int(block.get("width", 0) or 0),
+            native_height=int(block.get("height", 0) or 0),
+            has_alpha=alpha,
+            xref=int(block["xref"]) if block.get("xref") else None,
         )
+
+    def _recombine_smask(self, image_bytes: bytes, mask_bytes: bytes, extension: str) -> tuple[bytes, str, bool]:
+        """Compose a PDF image and exposed soft mask without touching ordinary images."""
+        try:
+            base = fitz.Pixmap(image_bytes)
+            mask = fitz.Pixmap(mask_bytes)
+            if base.alpha or mask.n != 1:
+                return image_bytes, extension, base.alpha
+            composed = fitz.Pixmap(base, mask)
+            return composed.tobytes("png"), "png", True
+        except (RuntimeError, ValueError):
+            return image_bytes, extension, False
 
     def _bold_ratio(self, spans: Iterable[SpanData]) -> float:
         span_list = [span for span in spans if span.text.strip()]

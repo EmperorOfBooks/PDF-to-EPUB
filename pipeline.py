@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from cleaner import PdfCleaner
-from epub_builder import EpubBuilder
+from builder import EpubBuilder
 from extractor import PdfExtractor, ScannedPdfError
 
 logger = logging.getLogger("pdf2epub")
