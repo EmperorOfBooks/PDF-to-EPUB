@@ -48,6 +48,15 @@ class FlowImageUnit:
 
 
 @dataclass(frozen=True)
+class FlowTableUnit:
+    kind: str
+    rows: tuple[tuple[str, ...], ...]
+    y: float
+    page_number: int
+    has_header_row: bool = False
+
+
+@dataclass(frozen=True)
 class FlowLineUnit:
     kind: str
     text: str
@@ -64,7 +73,7 @@ class FlowLineUnit:
 @dataclass(frozen=True)
 class ChapterContent:
     title: str
-    items: tuple[FlowTextUnit | FlowImageUnit, ...]
+    items: tuple[FlowTextUnit | FlowImageUnit | FlowTableUnit, ...]
 
 
 @dataclass(frozen=True)
@@ -73,13 +82,14 @@ class CleanedDocument:
 
 
 class PdfCleaner:
-    def __init__(self, layout: LayoutAnalyzer | None = None) -> None:
+    def __init__(self, layout: LayoutAnalyzer | None = None, ocr_heuristics: bool = False) -> None:
         self.layout = layout or LayoutAnalyzer()
         self.hyphenator = pyphen.Pyphen(lang="en_US")
+        self.ocr_heuristics = ocr_heuristics
 
     def clean(self, document: ExtractedDocument) -> CleanedDocument:
         body_font_size = self.layout.analyze(document.pages).body_font_size
-        repeated_margin_texts = self._detect_repeated_margin_texts(document)
+        repeated_margin_texts = self._detect_repeated_margin_texts(document, body_font_size)
         chapters: list[ChapterContent] = []
         current_title = "Front Matter"
         current_items: list[FlowTextUnit | FlowImageUnit] = []
@@ -146,8 +156,8 @@ class PdfCleaner:
     def _infer_body_font_size(self, document: ExtractedDocument) -> float:
         return self.layout.analyze(document.pages).body_font_size
 
-    def _detect_repeated_margin_texts(self, document: ExtractedDocument) -> set[str]:
-        return self.layout.repeated_margin_texts(document.pages)
+    def _detect_repeated_margin_texts(self, document: ExtractedDocument, body_font_size: float) -> set[str]:
+        return self.layout.repeated_margin_texts(document.pages, body_font_size)
 
     def _is_toc_page(self, page: PageData, repeated_margin_texts: set[str]) -> bool:
         candidate_texts: list[str] = []
@@ -457,7 +467,6 @@ class PdfCleaner:
         if not text:
             return None
         regex_heading = any(pattern.match(text) for pattern in CHAPTER_PATTERNS)
-        regex_heading = regex_heading or bool(re.match(r"^chapter\s+[&s](?=\s|$)", text, flags=re.IGNORECASE))
         major_heading = len(text) <= 120 and (
             block.max_font_size >= body_font_size + FONT_SIZE_HEADLINE_DELTA
             or block.max_font_size >= body_font_size * FONT_SIZE_HEADLINE_MULTIPLIER
@@ -493,21 +502,6 @@ class PdfCleaner:
         t = re.sub(r"\bpg\.?\s*\d+\b", "", t, flags=re.IGNORECASE)
         t = re.sub(r"\s+pg\.?\s*$", "", t, flags=re.IGNORECASE)
         t = re.sub(r"\s*[:\-–—]+\s*$", "", t)
-        t = re.sub(r"^(chapter)\s+1&(?=\s|$)", r"\1 14", t, flags=re.IGNORECASE)
-        t = re.sub(r"^(chapter)\s+&(?=\s|$)", r"\1 4", t, flags=re.IGNORECASE)
-        t = re.sub(r"^(chapter)\s+s(?=\s|$)", r"\1 5", t, flags=re.IGNORECASE)
-
-        # Keep valid chapter labels but strip OCR marker noise like "Chapter &" or "Chapter S".
-        t = re.sub(r"^(chapter\s+[0-9ivxlcdm]+)\s*&\s*", r"\1 ", t, flags=re.IGNORECASE)
-        t = re.sub(r"^(chapter)\s*&\s*", r"\1 ", t, flags=re.IGNORECASE)
-        t = re.sub(r"^(chapter)\s+[A-Za-z]\s+(?=[A-Z])", r"\1 ", t, flags=re.IGNORECASE)
-
-        # Remove OCR-like ampersand artifacts around chapter numbers and titles.
-        t = re.sub(r"(?<=\d)\s*&\s*(?=[A-Za-z])", "", t)
-        t = re.sub(r"(?<=\d)\s*&\s*(?=\d)", "", t)
-        t = re.sub(r"\b&\b", " ", t)
-        t = re.sub(r"(\d)&(\d)", r"\1\2", t)
-        t = re.sub(r"(\d)&([A-Za-z])", r"\1\2", t)
         t = re.sub(r"([A-Za-z])&(\d)", r"\1\2", t)
 
         return self._normalize_text(t)
@@ -572,7 +566,7 @@ class PdfCleaner:
         return bool(flags & 16)
 
     def _normalize_text(self, text: str) -> str:
-        return re.sub(r"\s+", " ", ftfy.fix_text(text)).strip()
+        return re.sub(r"\s+", " ", ftfy.fix_text(text, uncurl_quotes=False)).strip()
 
     def _is_noise_text(self, text: str) -> bool:
         compact = re.sub(r"\s+", "", text)
@@ -580,8 +574,19 @@ class PdfCleaner:
             return True
         if len(compact) <= 4 and re.fullmatch(r"[0-9&GS]+", compact, flags=re.IGNORECASE):
             return True
+        if self.ocr_heuristics and self._is_ocr_garble(compact):
+            return True
         if re.search(r"[A-Za-z]", compact):
             return False
         if len(compact) <= 6:
             return True
         return bool(re.fullmatch(r"[\W\d_]+", compact))
+
+    def _is_ocr_garble(self, compact: str) -> bool:
+        """Heuristics for common OCR artifacts: short strings that are mostly repeated
+        single characters or stray punctuation runs with no real letters/words."""
+        if re.fullmatch(r"(.)\1{2,}", compact):
+            return True
+        if len(compact) <= 3 and re.fullmatch(r"[^\w]+", compact):
+            return True
+        return False
