@@ -1,0 +1,16 @@
+PyMuPDF (the `pymupdf`/`fitz` package) is dual-licensed by Artifex Software, Inc.:
+
+1. GNU Affero General Public License v3 or later (AGPL-3.0-or-later)
+   See licenses/AGPL-3.0.txt for the full text. Use under this option requires
+   that any network-accessible service built on PyMuPDF make its corresponding
+   source code available to users, per AGPL Section 13.
+
+2. Artifex Commercial License
+   A paid, proprietary license is available directly from Artifex Software,
+   Inc. for organizations that cannot comply with the AGPL's source-disclosure
+   obligations. No public license text exists for this option; terms are
+   negotiated directly with Artifex (https://artifex.com/licensing/).
+
+This repository's static dependency audit records this dual-licensing status.
+No commercial license has been obtained or is otherwise represented here;
+redistributors must independently determine which option applies to their use.
