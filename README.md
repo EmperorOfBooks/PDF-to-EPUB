@@ -2,18 +2,21 @@
 
 This project converts PDF, DOCX, ODT, RTF, and DOC documents into reflowable EPUB3 files using a staged pipeline:
 
-1. Ingest: route PDF input through pypdfium2 or office input through the DOCX/Pandoc/LibreOffice extractors.
-2. Structure analysis: detect heading candidates, recurring headers/footers, and multi-column reading order.
-3. Semantics + packaging: build XHTML chapter files, preserve image figures, and package them into EPUB3.
+1. Ingest: extract PDF text, images, tables, and page metrics with pypdfium2, or route office input through DOCX/Pandoc/LibreOffice.
+2. Structure analysis: detect covers and title pages, reconstruct reading order, identify deficient OCR pages, and filter recurring noise.
+3. Semantics + packaging: create accessible EPUB3 XHTML and a conversion audit report.
 
 ## Key modules
 
-- `extractor.py`: raw PDF extraction from pypdfium2, including text and bitmap image capture.
+- `extractor.py`: PDF text, image, table, and page-metric extraction using pypdfium2.
+- `cover.py`: cover/title-page classification and PDFium-backed cover rendering.
+- `ocr.py`: optional OCR engine adapters; install `rapidocr-onnxruntime` or `pytesseract` to enable OCR.
+- `telemetry.py`: word accounting, dropped-region tracking, and report.json generation.
 - `office_extractor.py`: DOCX semantic extraction and Pandoc-backed ODT/RTF/DOC ingestion.
 - `router.py`: extension-based unified ingestion into `CleanedDocument`.
-- `layout.py`: geometry statistics, column classification, and margin-artifact detection.
+- `layout.py`: geometry statistics, XY-cut reading order, and margin-artifact detection.
 - `cleaner.py`: normalizes text, filters noise, removes repeated headers/footers, detects headings, and groups content into reading order.
-- `builder.py`: creates EPUB chapter XHTML, image figure markup, and EPUB manifest/spine metadata.
+- `builder.py`: creates accessible EPUB content, including tables, linked notes, cover/title pages, and deterministic packaging.
 - `epub_builder.py`: compatibility import shim for the builder.
 - `pipeline.py`: orchestration layer for a single conversion pipeline.
 - `main.py`: CLI entrypoint.
@@ -25,6 +28,7 @@ Single file:
 ```bash
 python main.py --input "G:\Book Done.pdf" --output "G:\Book Done.epub"
 python main.py --input "G:\manuscript.docx" --output "G:\manuscript.epub"
+python main.py --input "G:\Book Done.pdf" --output "G:\Book Done.epub" --report "G:\Book Done.audit.json"
 ```
 
 Batch-style use from Python:
@@ -64,7 +68,7 @@ After:
 
 The converter is still limited in a few areas:
 
-- heavily scanned PDFs without OCR text layers
+- scanned pages when no optional OCR engine is installed or OCR cannot recover text
 - complex tables with merged cells or rotated text
 - mathematical expressions and code blocks that need richer semantic markup
 - RTL scripts and mixed-language layout tuning
