@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
+
+from epubcheck_harvester import ensure_epubcheck as harvest_epubcheck
 
 ROOT = Path(__file__).resolve().parent
 TEST_DIR = ROOT / 'test_batch'
@@ -24,16 +27,17 @@ def download(url: str, target: Path) -> None:
 
 
 def ensure_epubcheck() -> list[str]:
-    jar = ROOT / 'epubcheck' / 'epubcheck-5.3.0' / 'epubcheck.jar'
-    if not jar.exists():
-        raise FileNotFoundError(f'epubcheck jar not found at {jar}')
+    exe = shutil.which('epubcheck')
+    if exe:
+        return [exe]
+    jar = harvest_epubcheck(ROOT / 'epubcheck')
     return ['java', '-jar', str(jar)]
 
 
 def run_case(name: str, pdf_path: Path) -> None:
     epub_path = TEST_DIR / f'{name}.epub'
     result = subprocess.run([
-        str(ROOT / '.venv' / 'Scripts' / 'python.exe'),
+        sys.executable,
         str(ROOT / 'main.py'),
         '--input', str(pdf_path),
         '--output', str(epub_path),

@@ -7,10 +7,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+from epubcheck_harvester import ensure_epubcheck as harvest_epubcheck
 
 ROOT = Path(__file__).resolve().parent
 
@@ -42,20 +43,7 @@ def ensure_epubcheck():
     exe = shutil.which("epubcheck")
     if exe:
         return [exe]
-    zip_path = ROOT / "epubcheck.zip"
-    report_dir = ROOT / "epubcheck"
-    if not report_dir.exists():
-        if not zip_path.exists():
-            api = "https://api.github.com/repos/w3c/epubcheck/releases/latest"
-            with urllib.request.urlopen(api, timeout=30) as response:
-                payload = json.loads(response.read().decode())
-            url = payload["assets"][0]["browser_download_url"]
-            urllib.request.urlretrieve(url, str(zip_path))
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            archive.extractall(report_dir)
-    jar = next(report_dir.rglob("epubcheck.jar"), None)
-    if jar is None:
-        raise FileNotFoundError("epubcheck jar not found after unzip")
+    jar = harvest_epubcheck(ROOT / "epubcheck")
     return ["java", "-jar", str(jar)]
 
 
@@ -187,7 +175,7 @@ for file in sample_files:
         items.append(metrics)
         browser.close()
 print(json.dumps(items))
-""".replace('__ROOT__', str(extracted_dir).replace('\\', '/'))
+""".replace('__ROOT__', extracted_dir.as_posix())
     result = run_cmd([sys.executable, "-c", script], cwd=ROOT)
     if result.returncode != 0:
         raise RuntimeError(f"Playwright render check failed: {result.stderr.strip() or result.stdout.strip()}")
