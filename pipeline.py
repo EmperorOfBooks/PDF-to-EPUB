@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from builder import EpubBuilder
+from cleaner import PdfCleaner
 from extractor import ScannedPdfError
 from router import DocumentRouter
 
@@ -11,18 +12,28 @@ logger = logging.getLogger("pdf2epub")
 
 
 class ConversionPipeline:
-    def __init__(self, input_path: str | Path, output_path: str | Path, title: str | None = None) -> None:
+    def __init__(
+        self,
+        input_path: str | Path,
+        output_path: str | Path,
+        title: str | None = None,
+        include_colophon: bool = False,
+        ocr_heuristics: bool = False,
+    ) -> None:
         self.input_path = Path(input_path).expanduser().resolve()
         self.output_path = Path(output_path).expanduser().resolve()
         self.title = title or self.input_path.stem
+        self.include_colophon = include_colophon
+        self.ocr_heuristics = ocr_heuristics
 
     def run(self) -> Path:
         logger.info("Stage 1/3: ingest and extract PDF structure from %s", self.input_path)
         logger.info("Stage 2/3: normalize reading order and chapter structure")
-        cleaned = DocumentRouter().extract(self.input_path)
+        router = DocumentRouter(cleaner=PdfCleaner(ocr_heuristics=self.ocr_heuristics))
+        cleaned = router.extract(self.input_path)
 
         logger.info("Stage 3/3: build EPUB3 package")
-        result = EpubBuilder(self.output_path, title=self.title).build(cleaned)
+        result = EpubBuilder(self.output_path, title=self.title).build(cleaned, include_colophon=self.include_colophon)
         return result.output_path
 
 

@@ -13,6 +13,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert PDF and office documents into reflowable EPUB3.")
     parser.add_argument("--input", required=True, help="Path to a .pdf, .docx, .odt, .rtf, or .doc source")
     parser.add_argument("--output", required=True, help="Path to the output EPUB")
+    colophon_group = parser.add_mutually_exclusive_group()
+    colophon_group.add_argument(
+        "--include-colophon",
+        dest="include_colophon",
+        action="store_true",
+        default=False,
+        help="Append a generated colophon page with conversion metadata (default: omitted)",
+    )
+    colophon_group.add_argument(
+        "--no-colophon",
+        dest="include_colophon",
+        action="store_false",
+        help="Do not append a colophon page (default behavior)",
+    )
+    parser.add_argument(
+        "--ocr-heuristics",
+        action="store_true",
+        default=False,
+        help="Apply extra noise-filtering heuristics tuned for OCR-sourced text",
+    )
     return parser.parse_args()
 
 
@@ -32,7 +52,13 @@ def main() -> int:
         return 1
     output_path = resolve_output_path(input_path, Path(args.output).expanduser().resolve())
     try:
-        result = ConversionPipeline(input_path=input_path, output_path=output_path, title=input_path.stem).run()
+        result = ConversionPipeline(
+            input_path=input_path,
+            output_path=output_path,
+            title=input_path.stem,
+            include_colophon=args.include_colophon,
+            ocr_heuristics=args.ocr_heuristics,
+        ).run()
         print(str(result))
         return 0
     except ScannedPdfError as error:

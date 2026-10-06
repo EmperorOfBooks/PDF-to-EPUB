@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ebooklib import epub
 
-from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowTextUnit
+from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowTableUnit, FlowTextUnit
 from config import DEFAULT_LANGUAGE, DEFAULT_TITLE
 
 
@@ -81,6 +81,27 @@ pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.2em 0;
+}
+
+table, th, td {
+  border: 1px solid #999;
+}
+
+th, td {
+  padding: 0.4em 0.6em;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #f0f0f0;
+  font-weight: bold;
+}
 """
 
 
@@ -95,9 +116,9 @@ class EpubBuilder:
         self.title = title
         self.language = language
 
-    def build(self, document: CleanedDocument) -> BuildResult:
+    def build(self, document: CleanedDocument, include_colophon: bool = False) -> BuildResult:
         book = epub.EpubBook()
-        book.set_identifier(self._identifier())
+        book.set_identifier(self._identifier(document))
         book.set_title(self.title)
         book.set_language(self.language)
         book.add_author("Unknown")
@@ -122,6 +143,13 @@ class EpubBuilder:
             book.add_item(html_item)
             epub_chapters.append(html_item)
             toc_entries.append(epub.Link(html_item.file_name, chapter.title, f"chapter_{chapter_index}"))
+
+        if include_colophon:
+            colophon_item = self._build_colophon(modified)
+            colophon_item.add_link(href="../styles/book.css", rel="stylesheet", type="text/css")
+            book.add_item(colophon_item)
+            epub_chapters.append(colophon_item)
+            toc_entries.append(epub.Link(colophon_item.file_name, "Colophon", "colophon"))
 
         book.toc = tuple(toc_entries)
         book.spine = ["nav", *epub_chapters]
@@ -163,6 +191,11 @@ class EpubBuilder:
                 item_index += 1
                 continue
 
+            if isinstance(item, FlowTableUnit):
+                html_parts.append(self._render_table(item))
+                item_index += 1
+                continue
+
             image_key = hashlib.sha256(item.image_bytes).hexdigest()
             if image_key in seen_images:
                 item_index += 1
@@ -197,6 +230,36 @@ class EpubBuilder:
         )
         html_item.set_content(content.encode("utf-8"))
         return html_item, image_items
+
+    def _render_table(self, table: FlowTableUnit) -> str:
+        rows_html: list[str] = []
+        for row_index, row in enumerate(table.rows):
+            use_header = table.has_header_row and row_index == 0
+            cell_tag = "th" if use_header else "td"
+            cells_html = "".join(
+                f"<{cell_tag}>{html.escape(cell).replace(chr(10), '<br/>')}</{cell_tag}>" for cell in row
+            )
+            rows_html.append(f"<tr>{cells_html}</tr>")
+        return f"<table>{''.join(rows_html)}</table>"
+
+    def _build_colophon(self, generated_at: str) -> epub.EpubHtml:
+        """Optional closing page (only when --include-colophon is passed) documenting
+        how this EPUB was generated, decoupled from the default conversion output."""
+        body = (
+            f"<h1>Colophon</h1>"
+            f"<p>This EPUB edition of <em>{html.escape(self.title)}</em> was generated automatically "
+            f"from the source document using the EmperorOfBooks PDF-to-EPUB conversion engine.</p>"
+            f"<p>Generated: {html.escape(generated_at)}</p>"
+        )
+        content = self._wrap_xhtml("Colophon", body)
+        html_item = epub.EpubHtml(
+            title="Colophon",
+            file_name="text/colophon.xhtml",
+            lang=self.language,
+            uid="colophon",
+        )
+        html_item.set_content(content.encode("utf-8"))
+        return html_item
 
     def _wrap_xhtml(self, title: str, body: str) -> str:
         return (
@@ -239,8 +302,18 @@ class EpubBuilder:
         text = html.unescape(value).strip().lower().replace("&", " and ")
         return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s]", " ", text)).strip()
 
-    def _identifier(self) -> str:
-        return str(uuid.uuid4())
+    def _identifier(self, document: CleanedDocument) -> str:
+        """Derive a deterministic UUID5 from the book's title and content, so re-converting
+        the same source produces a stable EPUB identifier instead of a new random one."""
+        hasher = hashlib.sha256()
+        hasher.update(self.title.encode("utf-8"))
+        for chapter in document.chapters:
+            hasher.update(chapter.title.encode("utf-8"))
+            for item in chapter.items:
+                if isinstance(item, FlowTextUnit):
+                    hasher.update(item.text.encode("utf-8"))
+        content_hash = hasher.hexdigest()
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, f"urn:emperorofbooks:pdf-to-epub:{content_hash}"))
 
 
 Builder = EpubBuilder
