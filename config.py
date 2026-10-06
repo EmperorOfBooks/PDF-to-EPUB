@@ -31,7 +31,7 @@ CHAPTER_PATTERNS = (
     re.compile(r"^глава\s+[0-9ivxlcdm]+", re.IGNORECASE | re.UNICODE),
     re.compile(r"^(пролог|эпилог|предисловие|введение|приложение)\b", re.IGNORECASE | re.UNICODE),
     # CJK: "第...章" (Chapter N) and "第...节"/"第...部" variants
-    re.compile(r"^第[0-9一二三四五六七八九十百千0-9]+[章节部回]"),
+    re.compile(r"^第[0-9一二三四五六七八九十百千]+[章节部回]"),
     re.compile(r"^(序章|序言|前言|引言|附录|尾声)"),
 )
 DEFAULT_LANGUAGE = "en"

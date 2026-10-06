@@ -231,9 +231,9 @@ class PdfPipelineTests(unittest.TestCase):
 
         document = CleanedDocument(chapters=(chapter,))
 
-        default_path = tempfile.mktemp(suffix='.epub')
-        colophon_path = tempfile.mktemp(suffix='.epub')
-        try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            default_path = os.path.join(temp_dir, 'default.epub')
+            colophon_path = os.path.join(temp_dir, 'colophon.epub')
             EpubBuilder(default_path).build(document)
             EpubBuilder(colophon_path).build(document, include_colophon=True)
 
@@ -244,10 +244,6 @@ class PdfPipelineTests(unittest.TestCase):
 
             self.assertFalse(any('colophon' in name.lower() for name in default_names))
             self.assertTrue(any('colophon' in name.lower() for name in colophon_names))
-        finally:
-            for path in (default_path, colophon_path):
-                if os.path.exists(path):
-                    os.remove(path)
 
     def test_ocr_heuristics_flag_filters_repeated_character_noise(self):
         cleaner_default = PdfCleaner()
