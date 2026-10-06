@@ -4,9 +4,15 @@ from collections import Counter
 from dataclasses import dataclass
 from math import ceil
 from statistics import median
-from typing import Iterable
+from typing import Iterable, Sequence
 
-from config import HEADER_FOOTER_MARGIN_RATIO, HEADER_REPEAT_RATIO, MIN_HEADER_REPEAT_COUNT
+from config import (
+    HEADER_FOOTER_MARGIN_RATIO,
+    HEADER_REPEAT_RATIO,
+    MIN_HEADER_REPEAT_COUNT,
+    XY_CUT_MIN_BAND_GAP,
+    XY_CUT_MIN_GUTTER,
+)
 from extractor import PageData, TextBlockData
 
 
@@ -83,6 +89,65 @@ class LayoutAnalyzer:
                 block.bbox[0],
             ),
         )
+
+    def xy_cut_order(
+        self,
+        boxes: Sequence[tuple[float, float, float, float]],
+        page_width: float,
+        page_height: float = 0.0,
+    ) -> list[int]:
+        """Reading order of bounding boxes via recursive XY-cut over projection profiles.
+
+        Vertical whitespace valleys (gutters) are tried first so that multi-column
+        pages are segmented into columns before any line assembly happens; if the
+        region has no gutter, horizontal valleys split it into bands, which are
+        then recursed.
+        """
+        min_gap_x = max(XY_CUT_MIN_GUTTER, page_width * 0.01)
+        return self._xy_cut(list(range(len(boxes))), boxes, min_gap_x)
+
+    def _xy_cut(self, indices: list[int], boxes: Sequence[tuple[float, float, float, float]], min_gap_x: float) -> list[int]:
+        if len(indices) <= 1:
+            return indices
+        column_groups = self._split_by_valleys(indices, boxes, axis=0, min_gap=min_gap_x)
+        if len(column_groups) > 1:
+            return [index for group in column_groups for index in self._xy_cut(group, boxes, min_gap_x)]
+        band_groups = self._split_by_valleys(indices, boxes, axis=1, min_gap=XY_CUT_MIN_BAND_GAP)
+        if len(band_groups) > 1:
+            return [index for group in band_groups for index in self._xy_cut(group, boxes, min_gap_x)]
+        return sorted(indices, key=lambda index: (boxes[index][1], boxes[index][0]))
+
+    @staticmethod
+    def _split_by_valleys(
+        indices: list[int],
+        boxes: Sequence[tuple[float, float, float, float]],
+        axis: int,
+        min_gap: float,
+    ) -> list[list[int]]:
+        lo, hi = axis, axis + 2
+        ordered = sorted(indices, key=lambda index: (boxes[index][lo], boxes[index][hi]))
+        groups: list[list[int]] = [[ordered[0]]]
+        reach = boxes[ordered[0]][hi]
+        for index in ordered[1:]:
+            if boxes[index][lo] - reach > min_gap:
+                groups.append([index])
+            else:
+                groups[-1].append(index)
+            reach = max(reach, boxes[index][hi])
+        return groups
+
+    @staticmethod
+    def _groups_overlap_vertically(groups: list[list[int]], boxes: Sequence[tuple[float, float, float, float]]) -> bool:
+        """A gutter only counts when the groups it separates share vertical extent (true columns)."""
+        extents = [(min(boxes[i][1] for i in group), max(boxes[i][3] for i in group)) for group in groups]
+        for position, (top, bottom) in enumerate(extents):
+            others = [extent for other, extent in enumerate(extents) if other != position]
+            other_top = min(extent[0] for extent in others)
+            other_bottom = max(extent[1] for extent in others)
+            overlap = min(bottom, other_bottom) - max(top, other_top)
+            if overlap < 0.3 * max(bottom - top, 1.0):
+                return False
+        return True
 
     def is_full_width_image(self, page: PageData, bbox: tuple[float, float, float, float]) -> bool:
         return (bbox[2] - bbox[0]) > page.width * 0.6
