@@ -2,13 +2,13 @@
 
 This project converts PDF, DOCX, ODT, RTF, and DOC documents into reflowable EPUB3 files using a staged pipeline:
 
-1. Ingest: route PDF input through PyMuPDF or office input through the DOCX/Pandoc extractors.
+1. Ingest: route PDF input through pypdfium2 or office input through the DOCX/Pandoc/LibreOffice extractors.
 2. Structure analysis: detect heading candidates, recurring headers/footers, and multi-column reading order.
 3. Semantics + packaging: build XHTML chapter files, preserve image figures, and package them into EPUB3.
 
 ## Key modules
 
-- `extractor.py`: raw PDF extraction from PyMuPDF, including text and bitmap image capture.
+- `extractor.py`: raw PDF extraction from pypdfium2, including text and bitmap image capture.
 - `office_extractor.py`: DOCX semantic extraction and Pandoc-backed ODT/RTF/DOC ingestion.
 - `router.py`: extension-based unified ingestion into `CleanedDocument`.
 - `layout.py`: geometry statistics, column classification, and margin-artifact detection.
