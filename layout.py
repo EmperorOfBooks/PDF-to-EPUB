@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections import Counter
 from dataclasses import dataclass
 from math import ceil
@@ -10,7 +9,8 @@ from typing import Iterable, Sequence
 from config import (
     HEADER_FOOTER_MARGIN_RATIO,
     HEADER_REPEAT_RATIO,
-    PAGE_NUMBER_PATTERN,
+    MARGIN_ARTIFACT_BOTTOM_RATIO,
+    MARGIN_ARTIFACT_TOP_RATIO,
     MIN_HEADER_REPEAT_COUNT,
     XY_CUT_MIN_BAND_GAP,
     XY_CUT_MIN_GUTTER,
@@ -18,7 +18,7 @@ from config import (
 from extractor import PageData, TextBlockData
 
 
-PAGE_LABEL_PATTERN = re.compile(r"^(?:page\s+\d+(?:\s+of\s+\d+)?|\d+\s+of\s+\d+|[-–—]\s*\d+\s*[-–—])$", re.IGNORECASE)
+WATERMARK_FONT_SIZE_MULTIPLIER = 3.0
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,10 @@ class LayoutAnalyzer:
             median_line_height=float(median(line_heights)) if line_heights else 12.0,
         )
 
-    def repeated_margin_texts(self, document_pages: Iterable[PageData]) -> set[str]:
+    def repeated_margin_texts(self, document_pages: Iterable[PageData], body_font_size: float | None = None) -> set[str]:
+        """Repeated boilerplate text: classic header/footer margin bands, plus
+        oversized repeated watermark text (e.g. a diagonal "PROOF" stamp) that
+        spans well outside the margin bands but recurs across most pages."""
         pages = tuple(document_pages)
         counts: Counter[str] = Counter()
         threshold = max(MIN_HEADER_REPEAT_COUNT, ceil(len(pages) * HEADER_REPEAT_RATIO))
@@ -63,10 +66,14 @@ class LayoutAnalyzer:
                 text = self.normalize(block.text)
                 if not text:
                     continue
-                if block.bbox[3] <= top_limit or block.bbox[1] >= bottom_limit:
-                    if text not in seen:
-                        counts[text] += 1
-                        seen.add(text)
+                in_margin = block.bbox[3] <= top_limit or block.bbox[1] >= bottom_limit
+                is_oversized = (
+                    body_font_size is not None
+                    and block.max_font_size >= body_font_size * WATERMARK_FONT_SIZE_MULTIPLIER
+                )
+                if (in_margin or is_oversized) and text not in seen:
+                    counts[text] += 1
+                    seen.add(text)
         return {text for text, count in counts.items() if count >= threshold}
 
     def column_index(self, page: PageData, x_value: float) -> int:
@@ -82,17 +89,7 @@ class LayoutAnalyzer:
     def is_margin_artifact(self, page: PageData, block: TextBlockData, body_font_size: float) -> bool:
         if len(block.lines) != 1 or block.max_font_size > body_font_size * 1.05:
             return False
-        is_header = block.bbox[3] <= page.height * 0.10
-        is_footer = block.bbox[1] >= page.height * 0.90
-        if not (is_header or is_footer):
-            return False
-        text = self.normalize(block.text)
-        return bool(PAGE_NUMBER_PATTERN.match(text) or PAGE_LABEL_PATTERN.match(text))
-
-    def is_watermark(self, page: PageData, block: TextBlockData, body_font_size: float) -> bool:
-        oversized = block.max_font_size >= body_font_size * 6.0
-        off_page = block.bbox[0] < 0 or block.bbox[2] > page.width or block.bbox[1] < 0 or block.bbox[3] > page.height
-        return oversized and off_page
+        return block.bbox[3] <= page.height * MARGIN_ARTIFACT_TOP_RATIO or block.bbox[1] >= page.height * MARGIN_ARTIFACT_BOTTOM_RATIO
 
     def ordered_blocks(self, page: PageData, blocks: Iterable[TextBlockData] | None = None) -> list[TextBlockData]:
         candidates = list(blocks if blocks is not None else page.text_blocks)
@@ -111,17 +108,15 @@ class LayoutAnalyzer:
         page_width: float,
         page_height: float = 0.0,
     ) -> list[int]:
-        """Reading order of bounding boxes via recursive XY-cut over projection profiles.
-
-        Vertical whitespace valleys (gutters) are tried first so that multi-column
-        pages are segmented into columns before any line assembly happens; if the
-        region has no gutter, horizontal valleys split it into bands, which are
-        then recursed.
-        """
         min_gap_x = max(XY_CUT_MIN_GUTTER, page_width * 0.01)
         return self._xy_cut(list(range(len(boxes))), boxes, min_gap_x)
 
-    def _xy_cut(self, indices: list[int], boxes: Sequence[tuple[float, float, float, float]], min_gap_x: float) -> list[int]:
+    def _xy_cut(
+        self,
+        indices: list[int],
+        boxes: Sequence[tuple[float, float, float, float]],
+        min_gap_x: float,
+    ) -> list[int]:
         if len(indices) <= 1:
             return indices
         column_groups = self._split_by_valleys(indices, boxes, axis=0, min_gap=min_gap_x)
@@ -150,19 +145,6 @@ class LayoutAnalyzer:
                 groups[-1].append(index)
             reach = max(reach, boxes[index][hi])
         return groups
-
-    @staticmethod
-    def _groups_overlap_vertically(groups: list[list[int]], boxes: Sequence[tuple[float, float, float, float]]) -> bool:
-        """A gutter only counts when the groups it separates share vertical extent (true columns)."""
-        extents = [(min(boxes[i][1] for i in group), max(boxes[i][3] for i in group)) for group in groups]
-        for position, (top, bottom) in enumerate(extents):
-            others = [extent for other, extent in enumerate(extents) if other != position]
-            other_top = min(extent[0] for extent in others)
-            other_bottom = max(extent[1] for extent in others)
-            overlap = min(bottom, other_bottom) - max(top, other_top)
-            if overlap < 0.3 * max(bottom - top, 1.0):
-                return False
-        return True
 
     def is_full_width_image(self, page: PageData, bbox: tuple[float, float, float, float]) -> bool:
         return (bbox[2] - bbox[0]) > page.width * 0.6

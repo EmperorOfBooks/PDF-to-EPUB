@@ -23,7 +23,7 @@ SUP_TOKEN_RE = re.compile(f"{SUP_OPEN}([^{SUP_CLOSE}]*){SUP_CLOSE}")
 NOTE_MARKER_RE = re.compile(r"^(?:\[\d{1,3}\]|\d{1,3}|[*†‡§¶]{1,3})$")
 LEADING_MARKER_RE = re.compile(r"^(\[\d{1,3}\]|\d{1,3}(?!\d)|[*†‡§¶]{1,3})[\.\):]?\s*(?=\S)")
 ZERO_WIDTH_SPACE_RE = re.compile("\u200b+")
-ZERO_WIDTH_NONBREAK_RE = re.compile("[\u2060\ufeff]")
+ZERO_WIDTH_NONBREAK_RE = re.compile("[\u2060\ufeff\ufffe\uffff]")
 
 MONO_NAME_HINTS = ("mono", "courier", "consolas", "menlo", "typewriter", "lucida console", "inconsolata", "source code")
 BOLD_NAME_HINTS = ("bold", "black", "heavy", "semibold", "demi")

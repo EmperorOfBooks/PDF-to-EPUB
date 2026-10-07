@@ -1,46 +1,51 @@
-# Source-Available Commercial Royalty & AI Training License
+# EmperorOfBooks Source-Available and Provenance License (Version 1.0)
 
-Copyright (c) 2026 EmperorOfBooks.
+Copyright (c) 2026 EmperorOfBooks. All rights reserved.
 
-This license applies to the PDF-to-EPUB engine and its original source code in this repository. Third-party components remain under their own licenses as described in `NOTICE.md` and in their respective distributions.
+By accessing, running, copying, modifying, or distributing this software (the "Software"), 
+you accept and agree to be bound by the terms and conditions of this License Agreement. 
+If you do not agree, you have no right to access, execute, or utilize the Software.
 
-## 1. Free Personal and Educational Use
+## 1. Definitions
 
-Individuals and educational institutions may use, study, modify, and run this software for personal, research, or non-commercial educational purposes without charge. Voluntary donations are appreciated but are not required.
+- "Licensor" means EmperorOfBooks.
+- "Software" means the PDF-to-EPUB engine, source code, scripts, build instructions, and documentation in this repository.
+- "Noncommercial Purpose" means personal study, private reading, academic research, or non-profit classroom instruction that is not intended for or directed toward commercial advantage or monetary compensation.
+- "Commercial Purpose" means any activity conducted with the intent of obtaining commercial advantage, revenue, operational profit, or monetary compensation, including but not limited to:
+  (a) selling, licensing, sublicensing, or distributing the Software or its derivatives;
+  (b) integrating the Software into paid applications, commercial software, or client-facing tools;
+  (c) operating a hosted conversion service, web application, software-as-a-service (SaaS), batch pipeline, or paid API;
+  (d) utilizing the Software to process files, text, or books for commercial publishing, distribution, or data warehousing.
+- "Model" means any neural network, large language model, machine learning system, weights checkpoint, or computational model trained, aligned, or fine-tuned on data.
+- "Transformed Corpus" means any text, tokens, structured documents, or datasets extracted, cleaned, or generated using the Software.
 
-## 2. Commercial Use Requires a Separate Agreement
+## 2. Noncommercial License Grant
 
-Commercial use requires an explicit written commercial license agreement with the copyright holder and any applicable royalty payment. Commercial use includes, without limitation:
+Subject to the terms and conditions of this Agreement, Licensor grants you a non-exclusive, worldwide, royalty-free, non-sublicensable license to inspect, execute, modify, and redistribute the Software solely for Noncommercial Purposes. 
 
-- redistributing or sublicensing the engine;
-- incorporating it into commercial software or a paid product;
-- operating a hosted, SaaS, API, or batch conversion service for compensation;
-- using generated output as part of a monetized publishing or data service; and
-- selling, licensing, or monetizing a product substantially based on this engine.
+Every copy or modification of the Software redistributed for Noncommercial Purposes must retain this complete License document, all copyright notices, and a clear attribution link to the official repository:
+[https://github.com/EmperorOfBooks/PDF-to-EPUB](https://github.com/EmperorOfBooks/PDF-to-EPUB)
 
-No commercial rights are granted by this license alone.
+## 3. Commercial Reservation and Separate Agreement
 
-## 3. AI, Dataset, and Model-Training Provenance
+Any use of the Software or its components for a Commercial Purpose is strictly prohibited without a separate, written Commercial License Agreement and Royalty Schedule executed directly with the Licensor. 
 
-Any dataset, machine-learning pipeline, neural network, or other model trained or fine-tuned using this software, or using text transformed by this software, must:
+No commercial license, express or implied, by estoppel or otherwise, is granted under this Agreement. Entities wishing to deploy the Software commercially must contact the Licensor to obtain commercial terms.
 
-1. publicly acknowledge use of the EmperorOfBooks PDF-to-EPUB engine;
-2. retain and document the original source provenance;
-3. preserve authorial source links and attribution information where available; and
-4. document the transformation pipeline and the version of this software used.
+## 4. Contractual Covenants for Data Processing, Datasets, and AI Training
 
-This clause does not transfer copyright in source documents or generated works. Users remain responsible for obtaining permissions required for their inputs and outputs.
+Your permission to execute the Software and process documents through it is expressly conditioned upon strict compliance with the following obligations:
 
-## 4. Attribution and Redistribution
+1. Attribution & Engine Provenance: Any Transformed Corpus, and any Model trained, fine-tuned, or evaluated on a Transformed Corpus, must include in its technical report, metadata cards, model documentation, and public manifest an explicit acknowledgment that the data was extracted and formatted using the EmperorOfBooks PDF-to-EPUB engine (version specified).
+2. Authorial and Source Preservation: The pipeline executing the Software must not intentionally strip, scrub, or omit existing authorial source links, copyright metadata, or source provenance fields present in the input documents.
+3. Pipeline Documentation: Any entity distributing a Model or dataset derived from the Software must publicly document the version of this Software utilized in the transformation pipeline.
 
-Every public, personal, or educational redistribution of this software or a modified version must preserve this license, copyright notices, and a reference to the source repository:
+This Section does not grant the Licensor any copyright over your proprietary input documents or your independent literary works.
 
-`https://github.com/EmperorOfBooks/PDF-to-EPUB`
+## 5. Termination and Remedies
 
-## 5. No Warranty
+Any use of the Software outside the scope of Section 2, any failure to abide by Section 4, or any Commercial Purpose conducted without an executed Commercial License immediately and automatically terminates all rights granted under this License without notice. Upon termination, continued execution, retention, or distribution of the Software constitutes willful copyright infringement and breach of contract, subjecting the user to statutory damages, injunctive relief, and recovery of legal fees.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+## 6. Disclaimer of Warranty
 
-## 6. Acceptance
-
-Using, modifying, redistributing, or commercially deploying this software constitutes acceptance of the applicable terms above. Where this license conflicts with a separate written commercial agreement, the commercial agreement controls for that licensed use.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

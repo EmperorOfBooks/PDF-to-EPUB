@@ -6,11 +6,12 @@ import re
 import uuid
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowNoteUnit, FlowTableUnit, FlowTextUnit
 from config import DEFAULT_LANGUAGE, DEFAULT_TITLE
-from cover import COVER_IMAGE, TitlePage, synthesize_cover_svg
+from cover import TitlePage
 from inline import (
     EM_CLOSE,
     EM_OPEN,
@@ -47,8 +48,6 @@ p {
   text-align: justify;
   hyphens: auto;
 }
-
-p.scene-break { margin: 1.5em 0; text-align: center; text-indent: 0; letter-spacing: 0.2em; }
 
 h1, h2, h3 {
   text-align: left;
@@ -113,8 +112,6 @@ section.titlepage h1, section.titlepage h2 { text-align: center; }
 p.doc-author, p.doc-imprint { text-indent: 0; text-align: center; margin: 0.8em 0; }
 p.doc-author { font-size: 1.2em; }
 p.doc-imprint { font-size: 0.9em; color: #444; }
-body.cover { margin: 0; text-align: center; }
-body.cover svg { margin: 0 auto; max-height: 100vh; }
 """
 
 EPOCH_DATE = "1980-01-01T00:00:00Z"
@@ -131,17 +128,6 @@ INLINE_TAGS = {
     SUB_OPEN: "<sub>",
     SUB_CLOSE: "</sub>",
 }
-
-LEGAL_ATTRIBUTIONS = (
-    ("PyMuPDF / fitz", "AGPL-3.0 or commercial license; Artifex Software, Inc."),
-    ("Pillow", "HPND License; Alex Clark and Pillow contributors."),
-    ("EbookLib", "LGPL-3.0; Aleksandar Erkalović and contributors."),
-    ("pyphen", "LGPL-2.1+, MPL-1.1, or GPL-2.0+; Guillaume Ayoub and contributors."),
-    ("ftfy", "Apache License 2.0; Luminoso Technologies, Inc."),
-    ("lxml", "BSD-3-Clause and ZPL-2.0; lxml project."),
-    ("pypandoc", "MIT License; Juho Vepsäläinen and contributors."),
-    ("python-docx", "MIT License; Steve Canny and contributors."),
-)
 
 
 @dataclass
@@ -169,7 +155,7 @@ class EpubBuilder:
         self._note_files: dict[int, str] = {}
         self._counts = {"tables": 0, "images": 0, "figures": 0, "notes": 0, "note_refs": 0}
 
-    def build(self, document: CleanedDocument) -> BuildResult:
+    def build(self, document: CleanedDocument, include_colophon: bool = False) -> BuildResult:
         self._note_files = {}
         self._counts = {"tables": 0, "images": 0, "figures": 0, "notes": 0, "note_refs": 0}
         for chapter_index, chapter in enumerate(document.chapters, start=1):
@@ -185,41 +171,6 @@ class EpubBuilder:
         items: list[PackageItem] = []
         spine: list[PackageItem] = []
         items.append(PackageItem("styles/book.css", "text/css", EPUB_CSS.encode("utf-8"), "style"))
-
-        cover_item: PackageItem | None = None
-        cover = document.cover
-        if cover is not None and cover.kind == COVER_IMAGE and cover.jpeg:
-            cover_item = PackageItem("images/cover.jpg", "image/jpeg", cover.jpeg, "cover-image", "cover-image")
-            items.append(cover_item)
-            width, height = cover.width or 1600, cover.height or 2560
-            cover_page = PackageItem(
-                "text/cover.xhtml",
-                "application/xhtml+xml",
-                self._cover_xhtml(width, height).encode("utf-8"),
-                "cover",
-                "svg",
-                "Cover",
-            )
-            items.append(cover_page)
-            spine.append(cover_page)
-        else:
-            svg = synthesize_cover_svg(
-                title_page.title if title_page and title_page.title else self.title,
-                author if author != "Unknown" else "",
-                title_page.subtitle if title_page else "",
-            )
-            cover_item = PackageItem("images/cover.svg", "image/svg+xml", svg, "cover-image", "cover-image")
-            items.append(cover_item)
-            cover_page = PackageItem(
-                "text/cover.xhtml",
-                "application/xhtml+xml",
-                self._fallback_cover_xhtml().encode("utf-8"),
-                "cover",
-                "svg",
-                "Cover",
-            )
-            items.append(cover_page)
-            spine.append(cover_page)
 
         if title_page is not None:
             page = PackageItem(
@@ -245,16 +196,30 @@ class EpubBuilder:
             chapter_items.append(html_item)
             spine.append(html_item)
 
-        content_chapter_count = len(chapter_items)
-        legal_item = self._build_legal_chapter()
-        items.append(legal_item)
-        chapter_items.append(legal_item)
-        spine.append(legal_item)
+        if include_colophon:
+            generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            colophon = PackageItem(
+                "text/colophon.xhtml",
+                "application/xhtml+xml",
+                self._wrap_xhtml(
+                    "Colophon",
+                    "<h1>Colophon</h1>"
+                    f"<p>This EPUB edition of <em>{html.escape(self.title)}</em> was generated automatically "
+                    "from the source document using the EmperorOfBooks PDF-to-EPUB conversion engine.</p>"
+                    f"<p>Generated: {html.escape(generated_at)}</p>",
+                ).encode("utf-8"),
+                "colophon",
+                "",
+                "Colophon",
+            )
+            items.append(colophon)
+            chapter_items.append(colophon)
+            spine.append(colophon)
 
         nav = PackageItem(
             "nav.xhtml",
             "application/xhtml+xml",
-            self._nav_xhtml(chapter_items, spine, title_page is not None, True).encode("utf-8"),
+            self._nav_xhtml(chapter_items, spine, title_page is not None).encode("utf-8"),
             "nav",
             "nav",
             "Contents",
@@ -271,28 +236,10 @@ class EpubBuilder:
             files[f"EPUB/{item.file_name}"] = (item.content, item.media_type.startswith("image/") is False)
         self._write_zip(files, zip_stamp)
         counts = dict(self._counts)
-        return BuildResult(output_path=self.output_path, counts=counts, chapter_files=content_chapter_count)
-
-    def _build_legal_chapter(self) -> PackageItem:
-        attribution_items = "".join(
-            f"<li><strong>{html.escape(name)}</strong>: {html.escape(terms)}</li>"
-            for name, terms in LEGAL_ATTRIBUTIONS
-        )
-        body = (
-            '<h1 class="chapter-title">About This Edition &amp; Licensing</h1>'
-            '<p>This edition was converted using the EmperorOfBooks PDF-to-EPUB engine.</p>'
-            '<section aria-labelledby="third-party-attributions"><h2 id="third-party-attributions">'
-            f'Third-Party Attributions</h2><ul>{attribution_items}</ul></section>'
-            '<p>Repository license and notices: '
-            '<a href="https://github.com/EmperorOfBooks/PDF-to-EPUB">EmperorOfBooks/PDF-to-EPUB</a>.</p>'
-        )
-        return PackageItem(
-            "text/colophon_legal.xhtml",
-            "application/xhtml+xml",
-            self._wrap_xhtml("About This Edition & Licensing", body, "../").encode("utf-8"),
-            "colophon_legal",
-            "",
-            "About This Edition & Licensing",
+        return BuildResult(
+            output_path=self.output_path,
+            counts=counts,
+            chapter_files=len(chapter_items) - int(include_colophon),
         )
 
     @staticmethod
@@ -378,13 +325,11 @@ class EpubBuilder:
             "</package>\n"
         )
 
-    def _nav_xhtml(self, chapters: list[PackageItem], spine: list[PackageItem], has_title: bool, has_cover: bool) -> str:
+    def _nav_xhtml(self, chapters: list[PackageItem], spine: list[PackageItem], has_title: bool) -> str:
         toc = "\n".join(
             f'      <li><a href="{html.escape(item.file_name)}">{html.escape(item.title or "Untitled")}</a></li>' for item in chapters
         )
         landmarks = []
-        if has_cover:
-            landmarks.append('      <li><a epub:type="cover" href="text/cover.xhtml">Cover</a></li>')
         if has_title:
             landmarks.append('      <li><a epub:type="titlepage" href="text/titlepage.xhtml">Title Page</a></li>')
         if chapters:
@@ -400,30 +345,6 @@ class EpubBuilder:
             '  <nav epub:type="landmarks" id="landmarks" hidden="hidden">\n    <h2>Landmarks</h2>\n    <ol>\n'
             + "\n".join(landmarks)
             + "\n    </ol>\n  </nav>\n</body>\n</html>\n"
-        )
-
-    def _cover_xhtml(self, width: int, height: int) -> str:
-        return (
-            '<?xml version="1.0" encoding="utf-8"?>\n'
-            f"<!DOCTYPE html>\n<html {XHTML_NS} xml:lang=\"{html.escape(self.language)}\" lang=\"{html.escape(self.language)}\">\n"
-            "<head><meta charset=\"utf-8\" /><title>Cover</title>"
-            '<link rel="stylesheet" type="text/css" href="../styles/book.css" /></head>\n'
-            '<body class="cover"><section epub:type="cover" role="region" aria-label="Cover">'
-            f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
-            f'version="1.1" viewBox="0 0 {width} {height}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Cover">'
-            f'<image width="{width}" height="{height}" xlink:href="../images/cover.jpg" /></svg>'
-            "</section></body></html>\n"
-        )
-
-    def _fallback_cover_xhtml(self) -> str:
-        return (
-            '<?xml version="1.0" encoding="utf-8"?>\n'
-            f"<!DOCTYPE html>\n<html {XHTML_NS} xml:lang=\"{html.escape(self.language)}\" lang=\"{html.escape(self.language)}\">\n"
-            "<head><meta charset=\"utf-8\" /><title>Cover</title>"
-            '<link rel="stylesheet" type="text/css" href="../styles/book.css" /></head>\n'
-            '<body class="cover"><section epub:type="cover" role="region" aria-label="Cover">'
-            '<img src="../images/cover.svg" alt="Book cover" />'
-            "</section></body></html>\n"
         )
 
     def _title_page_html(self, title_page: TitlePage) -> str:
@@ -493,9 +414,7 @@ class EpubBuilder:
                 item_index += 1
                 continue
             if isinstance(item, FlowTextUnit):
-                if item.kind == "scene-break":
-                    html_parts.append(f'<p class="scene-break">{html.escape(item.text)}</p>')
-                elif item.kind == "heading":
+                if item.kind == "heading":
                     heading_text = item.text.strip()
                     next_item = chapter.items[item_index + 1] if item_index + 1 < len(chapter.items) else None
                     if isinstance(next_item, FlowTextUnit) and next_item.kind == "heading":
@@ -565,8 +484,9 @@ class EpubBuilder:
             scope = ' scope="col"' if tag == "th" else ""
             return "".join(f"<{tag}{scope}>{html.escape(' '.join(cell.split()))}</{tag}>" for cell in row)
 
-        head = f"<thead><tr>{cells(padded[0], 'th')}</tr></thead>"
-        body_rows = "".join(f"<tr>{cells(row, 'td')}</tr>" for row in padded[1:])
+        head = f"<thead><tr>{cells(padded[0], 'th')}</tr></thead>" if table.has_header_row else ""
+        body_source = padded[1:] if table.has_header_row else padded
+        body_rows = "".join(f"<tr>{cells(row, 'td')}</tr>" for row in body_source)
         body = f"<tbody>{body_rows}</tbody>" if body_rows else ""
         return f"<table>{head}{body}</table>"
 

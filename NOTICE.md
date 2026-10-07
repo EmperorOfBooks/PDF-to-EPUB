@@ -1,67 +1,69 @@
-# Third-Party Notices
+EmperorOfBooks Source-Available and Provenance License (Version 1.0)
+Copyright (c) 2026 EmperorOfBooks. All rights reserved.
 
-The PDF-to-EPUB engine is distributed with or depends on the following open-source projects. Their licenses and attribution requirements remain applicable to the corresponding components. This notice is a practical attribution summary, not a replacement for the license files distributed by each project.
+This software is licensed under the EmperorOfBooks Source-Available and Provenance License.
+- Personal, research, and educational use: Free without charge.
+- Commercial use, hosted SaaS/APIs, or monetized publishing pipelines: Requires a separate written commercial agreement and royalty schedule.
+- AI, dataset, and model-training provenance: Any model trained or fine-tuned on text transformed by this software must publicly acknowledge the engine, preserve authorial and source links, and document the transformation pipeline.
 
-## PyMuPDF / fitz
+For full license terms, see LICENSE.md.
+Official Repository: [https://github.com/EmperorOfBooks/PDF-to-EPUB](https://github.com/EmperorOfBooks/PDF-to-EPUB)
 
-- Project: PyMuPDF
-- License: AGPL-3.0 or commercial license
-- Copyright/holder: Artifex Software, Inc.
-- Use: PDF parsing, text geometry, image and XRef extraction
+Licenses of third-party dependencies
+------------------------------------
 
-Commercial users must obtain the appropriate commercial license from Artifex Software, Inc. where AGPL terms are not suitable.
+  colorama, 0.4.6
+    BSD-3-Clause
 
-## Pillow
+  EbookLib, 0.20
+    AGPL-3.0-or-later (GNU Affero General Public License v3 or later)
 
-- Project: Pillow
-- License: HPND License
-- Copyright/holder: Alex Clark and Pillow contributors
-- Use: SMask alpha compositing and image conversion
+  exceptiongroup, 1.3.0
+    MIT
 
-## EbookLib
+  ftfy, 6.3.1
+    Apache-2.0
 
-- Project: EbookLib
-- License: LGPL-3.0
-- Copyright/holder: Aleksandar Erkalović and contributors
-- Use: EPUB package, OPF, spine, navigation, and XHTML generation
+  lxml, 6.0.2
+    BSD-3-Clause
 
-## pyphen
+  packaging, 25.0
+    Apache-2.0 OR BSD-2-Clause
 
-- Project: pyphen
-- License: LGPL-2.1+, MPL-1.1, or GPL-2.0+
-- Copyright/holder: Guillaume Ayoub and contributors
-- Use: language-aware dehyphenation decisions
+  pillow, 12.3.0
+    MIT-CMU (historical permission notice, PIL-derived)
 
-## ftfy
+  pluggy, 1.6.0
+    MIT
 
-- Project: ftfy
-- License: Apache License 2.0
-- Copyright/holder: Luminoso Technologies, Inc.
-- Use: repair of mojibake and Unicode text artifacts
+  Pygments, 2.19.2
+    BSD-2-Clause
 
-## lxml
+  pypandoc, 1.17
+    MIT
 
-- Project: lxml
-- License: BSD-3-Clause and Zope Public License 2.0
-- Copyright/holder: the lxml project
-- Use: XML/XHTML ecosystem support and document processing dependencies
+  pypdfium2, 5.14.0
+    Apache-2.0 OR BSD-3-Clause (bundled pdfium library; dual-licensed)
 
-## pypandoc
+  pyphen, 0.18.1
+    GPL-2.0-or-later OR LGPL-2.1-or-later OR MPL-1.1 (triple-licensed; recipient's choice)
 
-- Project: pypandoc
-- License: MIT License
-- Copyright/holder: Juho Vepsäläinen and contributors
-- Use: office-document conversion bridge
+  pytest, 8.4.2
+    MIT
 
-Pandoc itself is a separate executable distributed under its own licensing terms and must be reviewed separately when installed or redistributed.
+  python-docx, 1.2.0
+    MIT
 
-## python-docx
+  six, 1.17.0
+    MIT
 
-- Project: python-docx
-- License: MIT License
-- Copyright/holder: Steve Canny and contributors
-- Use: DOCX paragraph, heading, and embedded-image extraction
+  tomli, 2.3.0
+    MIT
 
-## Attribution obligations
+  typing_extensions, 4.15.0
+    PSF-2.0
 
-Users must retain the applicable upstream notices when redistributing this engine or a package containing these dependencies. See each upstream project for the authoritative license text and current copyright holders.
+  wcwidth, 0.9.2
+    MIT
+
+Copies of the licenses are provided in the 'licenses' directory.
