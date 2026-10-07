@@ -224,6 +224,33 @@ class PdfPipelineTests(unittest.TestCase):
         self.assertEqual(len(cleaned.chapters), 1)
         self.assertIn('Chapter 4', cleaned.chapters[0].title)
         self.assertIn('A Seed is Sown', cleaned.chapters[0].title)
+    def test_copyright_page_is_own_chapter_without_catalog_ids(self):
+        def block(i, y, text):
+            line = LineData(text, (40.0, y, 300.0, y + 12.0), ())
+            return TextBlockData(1, i, (40.0, y, 300.0, y + 12.0), (line,), text, 12.0, 12.0, 0.0)
+
+        texts = (
+            '© 2026 Jane Doe. All rights reserved.',
+            'No part of this book may be reproduced in any form or',
+            'by any means without permission.',
+            'Edited by John Roe',
+            'ISBN: 979-8-9969524-0-3',
+            'LCCN: 2026917448',
+            'Printed in the United States of America',
+        )
+        blocks = tuple(block(i, 100.0 + i * 30.0, text) for i, text in enumerate(texts))
+        cleaned = PdfCleaner().clean(ExtractedDocument(pages=(PageData(1, 396.0, 612.0, blocks, ()),)))
+
+        self.assertEqual(cleaned.chapters[0].title, 'Copyright')
+        paragraphs = [item.text for item in cleaned.chapters[0].items if item.kind == 'paragraph']
+        self.assertEqual(
+            paragraphs,
+            [
+                '© 2026 Jane Doe. All rights reserved.',
+                'No part of this book may be reproduced in any form or by any means without permission.',
+                'Edited by John Roe',
+            ],
+        )
     def test_subheading_does_not_create_new_chapter_file(self):
         blocks = (
             TextBlockData(1, 0, (40.0, 80.0, 300.0, 100.0), (), 'Chapter 1', 18.0, 18.0, 0.8),

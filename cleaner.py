@@ -21,6 +21,12 @@ from inline import LEADING_MARKER_RE, link_note_refs, normalize_marker, strip_ma
 from layout import LayoutAnalyzer
 from telemetry import ConversionStats
 
+COPYRIGHT_SEARCH_PAGES = 12
+COPYRIGHT_EXCLUDED_LINE = re.compile(
+    r"^(?:ISBN(?:-1[03])?\b|LCCN\b|Library of Congress Control Number\b|Printed in the United States of America\b)",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class FlowTextUnit:
@@ -142,6 +148,12 @@ class PdfCleaner:
                 continue
             if self._is_toc_page(page, repeated_margin_texts):
                 self._drop(page, None, "table_of_contents", self._page_text(page), whole_page=True)
+                continue
+            if page.page_number <= COPYRIGHT_SEARCH_PAGES and self._is_copyright_page(page):
+                if current_items:
+                    chapters.append(ChapterContent(title=current_title, items=tuple(current_items + current_notes)))
+                chapters.append(self._copyright_chapter(page, repeated_margin_texts))
+                current_title, current_items, current_notes, current_paragraph_count = "Dedication", [], [], 0
                 continue
             for item in self._page_items(page, body_font_size, repeated_margin_texts):
                 if isinstance(item, FlowNoteUnit):
@@ -702,6 +714,34 @@ class PdfCleaner:
             and previous.kind == "heading"
             and self._looks_like_chapter_heading(previous.text)
         )
+
+    def _is_copyright_page(self, page: PageData) -> bool:
+        text = self._normalize_text(self._page_text(page)).lower()
+        return "all rights reserved" in text and ("©" in text or "copyright" in text)
+
+    def _copyright_chapter(self, page: PageData, repeated_margin_texts: set[str]) -> ChapterContent:
+        """Build the copyright page as its own chapter, one paragraph per statement, without catalog identifiers."""
+        body_font_size = self.layout.analyze((page,)).body_font_size
+        lines: list[tuple[str, float, float]] = []
+        for block in self.layout.ordered_blocks(page):
+            for line in block.lines:
+                text = self._normalize_text(strip_markup(line.markup or line.text))
+                if text and not COPYRIGHT_EXCLUDED_LINE.match(text):
+                    lines.append((text, line.bbox[1], block.max_font_size))
+        units: list[FlowTextUnit] = [
+            FlowTextUnit("heading", "Copyright", 0.0, page.page_number, body_font_size * 1.5, 1.0, 1, True)
+        ]
+        paragraphs: list[list[str]] = []
+        for text, _, _ in lines:
+            if paragraphs and text[0].islower() and not paragraphs[-1][-1].endswith(TERMINAL_PUNCTUATION):
+                paragraphs[-1].append(text)
+            else:
+                paragraphs.append([text])
+        for index, parts in enumerate(paragraphs):
+            units.append(
+                FlowTextUnit("paragraph", " ".join(parts), float(index + 1), page.page_number, body_font_size, 0.0)
+            )
+        return ChapterContent(title="Copyright", items=tuple(units))
 
     def _is_fragment_heading(self, text: str) -> bool:
         cleaned = self._clean_heading_text(text)
