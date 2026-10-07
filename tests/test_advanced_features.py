@@ -420,3 +420,31 @@ def test_epub_has_no_cover_page_or_cover_image():
     assert not any("cover" in name for name in names)
     assert "cover" not in opf
     assert 'epub:type="cover"' not in nav
+
+def test_metadata_ncx_landmarks_and_css(tmp_path):
+    page = TitlePage(
+        page_number=1,
+        title="The Song",
+        subtitle="The Dawn",
+        authors=("By: Jane Doe",),
+        imprints=("Copyright 2026", "Acme Publishing"),
+    )
+    chapters = [
+        ChapterContent(title="Copyright", items=[FlowTextUnit(kind="paragraph", text="x", y=0.0, page_number=1, font_size=12.0, bold_ratio=0.0)]),
+        ChapterContent(title="Prologue", items=[FlowTextUnit(kind="paragraph", text="y", y=0.0, page_number=1, font_size=12.0, bold_ratio=0.0)]),
+    ]
+    out = tmp_path / "b.epub"
+    EpubBuilder(out, title="Book").build(CleanedDocument(chapters=chapters, title_page=page))
+    with zipfile.ZipFile(out) as z:
+        assert z.namelist()[0] == "mimetype"
+        assert z.getinfo("mimetype").compress_type == zipfile.ZIP_STORED
+        opf = z.read("EPUB/content.opf").decode()
+        nav = z.read("EPUB/nav.xhtml").decode()
+        css = z.read("EPUB/styles/book.css").decode()
+        assert "toc.ncx" in z.namelist() or "EPUB/toc.ncx" in z.namelist()
+    assert "<dc:title>The Song: The Dawn</dc:title>" in opf
+    assert "<dc:creator>Jane Doe</dc:creator>" in opf
+    assert "<dc:publisher>Acme Publishing</dc:publisher>" in opf
+    assert 'spine toc="ncx"' in opf and "cover-image" not in opf
+    assert 'epub:type="bodymatter" href="text/chapter_2.xhtml"' in nav
+    assert "font-family: serif;" in css and "margin: 5%" not in css and "#fff" not in css

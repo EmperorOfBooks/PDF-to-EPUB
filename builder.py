@@ -31,15 +31,16 @@ EPUB_CSS = """@charset "utf-8";
 html, body {
   margin: 0;
   padding: 0;
-  background: #fff;
-  color: #111;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: serif;
+  font-style: normal;
+  font-weight: normal;
   line-height: 1.45;
   text-rendering: optimizeLegibility;
 }
 
 body {
-  margin: 5%;
+  margin: 0;
+  padding: 0;
 }
 
 p {
@@ -47,6 +48,8 @@ p {
   text-indent: 1.5em;
   text-align: justify;
   hyphens: auto;
+  font-style: normal;
+  font-weight: normal;
 }
 
 h1, h2, h3 {
@@ -97,8 +100,8 @@ pre {
 
 
 EPUB_CSS += """
-strong { font-weight: bold; }
-em { font-style: italic; }
+em, i { font-style: italic; }
+strong, b { font-weight: bold; }
 sup, sub { line-height: 0; font-size: 0.75em; }
 a.noteref, a[epub|type~="noteref"] { text-decoration: none; }
 aside[epub|type~="footnote"] { font-size: 0.85em; margin: 0.6em 0; }
@@ -114,6 +117,16 @@ p.doc-author, p.doc-imprint { text-indent: 0; text-align: center; margin: 0.8em 
 p.doc-author { font-size: 1.2em; }
 p.doc-imprint { font-size: 0.9em; color: #444; }
 """
+
+PUBLISHER_RE = re.compile(r"\b(press|publishers?|publishing|publications|books|editions?|llc|inc\.?)\b", re.IGNORECASE)
+COPYRIGHT_LINE_RE = re.compile(r"copyright|�|\b(?:1[5-9]|20)\d\d\b", re.IGNORECASE)
+BODY_START_RE = re.compile(r"\s*(prologue|chapter\s+\d+|part\s+\w+)", re.IGNORECASE)
+AUTHOR_PREFIX_RE = re.compile(r"^\s*(?:written\s+by|by)\s*[:\-\s]+", re.IGNORECASE)
+
+
+def clean_author(name: str) -> str:
+    return AUTHOR_PREFIX_RE.sub("", name).strip() or name.strip()
+
 
 EPOCH_DATE = "1980-01-01T00:00:00Z"
 ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
@@ -149,9 +162,18 @@ class BuildResult:
 
 
 class EpubBuilder:
-    def __init__(self, output_path: str | Path, title: str = DEFAULT_TITLE, language: str = DEFAULT_LANGUAGE) -> None:
+    def __init__(
+        self,
+        output_path: str | Path,
+        title: str = DEFAULT_TITLE,
+        language: str = DEFAULT_LANGUAGE,
+        publisher: str | None = None,
+    ) -> None:
         self.output_path = Path(output_path)
         self.title = title
+        self.publisher = publisher
+        self._meta_title = title
+        self._meta_publisher = publisher or ""
         self.language = language
         self._note_files: dict[int, str] = {}
         self._counts = {"tables": 0, "images": 0, "figures": 0, "notes": 0, "note_refs": 0}
@@ -167,7 +189,9 @@ class EpubBuilder:
         created = document.created or EPOCH_DATE
         zip_stamp = self._zip_timestamp(created)
         title_page = document.title_page
-        author = ", ".join(title_page.authors) if title_page and title_page.authors else "Unknown"
+        author = ", ".join(clean_author(name) for name in title_page.authors) if title_page and title_page.authors else "Unknown"
+        self._meta_title = self._metadata_title(title_page)
+        self._meta_publisher = self.publisher or self._metadata_publisher(title_page)
 
         items: list[PackageItem] = []
         spine: list[PackageItem] = []
@@ -232,6 +256,7 @@ class EpubBuilder:
             "META-INF/container.xml": (CONTAINER_XML.encode("utf-8"), True),
             "EPUB/content.opf": (opf.encode("utf-8"), True),
             "EPUB/nav.xhtml": (nav.content, True),
+            "EPUB/toc.ncx": (self._ncx(identifier, chapter_items).encode("utf-8"), True),
         }
         for item in items:
             files[f"EPUB/{item.file_name}"] = (item.content, item.media_type.startswith("image/") is False)
@@ -242,6 +267,42 @@ class EpubBuilder:
             counts=counts,
             chapter_files=len(chapter_items) - int(include_colophon),
         )
+
+    def _metadata_title(self, title_page: TitlePage | None) -> str:
+        if title_page is not None and title_page.title:
+            return f"{title_page.title}: {title_page.subtitle}" if title_page.subtitle else title_page.title
+        return self.title
+
+    @staticmethod
+    def _metadata_publisher(title_page: TitlePage | None) -> str:
+        if title_page is None:
+            return ""
+        for line in title_page.imprints:
+            if PUBLISHER_RE.search(line) and not COPYRIGHT_LINE_RE.search(line):
+                return line.strip()
+        return ""
+
+    def _ncx(self, identifier: str, chapters: list[PackageItem]) -> str:
+        points = "\n".join(
+            f'    <navPoint id="np{index}" playOrder="{index}"><navLabel><text>{html.escape(item.title or "Untitled")}</text></navLabel>'
+            f'<content src="{html.escape(item.file_name)}"/></navPoint>'
+            for index, item in enumerate(chapters, start=1)
+        )
+        return (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">\n'
+            f'  <head>\n    <meta name="dtb:uid" content="{html.escape(identifier)}"/>\n'
+            '    <meta name="dtb:depth" content="1"/>\n    <meta name="dtb:totalPageCount" content="0"/>\n'
+            '    <meta name="dtb:maxPageNumber" content="0"/>\n  </head>\n'
+            f'  <docTitle><text>{html.escape(self._meta_title)}</text></docTitle>\n  <navMap>\n{points}\n  </navMap>\n</ncx>\n'
+        )
+
+    @staticmethod
+    def _body_start(chapters: list[PackageItem]) -> PackageItem | None:
+        for item in chapters:
+            if BODY_START_RE.match(item.title or ""):
+                return item
+        return chapters[0] if chapters else None
 
     @staticmethod
     def _item_id(item: PackageItem) -> str:
@@ -298,6 +359,7 @@ class EpubBuilder:
             manifest.append(
                 f'    <item id="{html.escape(item_id)}" href="{html.escape(item.file_name)}" media-type="{item.media_type}"{props}/>'
             )
+        manifest.append('    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>')
         spine_refs = "\n".join(
             f'    <itemref idref="{html.escape(self._item_id(item))}"/>' for item in spine
         )
@@ -307,10 +369,11 @@ class EpubBuilder:
             f'xml:lang="{html.escape(self.language)}" prefix="schema: http://schema.org/">\n'
             '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n'
             f'    <dc:identifier id="book-id">{identifier}</dc:identifier>\n'
-            f"    <dc:title>{html.escape(self.title)}</dc:title>\n"
+            f"    <dc:title>{html.escape(self._meta_title)}</dc:title>\n"
             f"    <dc:language>{html.escape(self.language)}</dc:language>\n"
             f"    <dc:creator>{html.escape(author)}</dc:creator>\n"
-            "    <dc:publisher>PDF to EPUB</dc:publisher>\n"
+            + (f"    <dc:publisher>{html.escape(self._meta_publisher)}</dc:publisher>\n" if self._meta_publisher else "")
+            +
             f'    <meta property="dcterms:modified">{created}</meta>\n'
             '    <meta property="schema:accessMode">textual</meta>\n'
             '    <meta property="schema:accessMode">visual</meta>\n'
@@ -322,7 +385,7 @@ class EpubBuilder:
             "structural navigation and ARIA document landmarks.</meta>\n"
             "  </metadata>\n"
             "  <manifest>\n" + "\n".join(manifest) + "\n  </manifest>\n"
-            "  <spine>\n" + spine_refs + "\n  </spine>\n"
+            "  <spine toc=\"ncx\">\n" + spine_refs + "\n  </spine>\n"
             "</package>\n"
         )
 
@@ -333,9 +396,10 @@ class EpubBuilder:
         landmarks = []
         if has_title:
             landmarks.append('      <li><a epub:type="titlepage" href="text/titlepage.xhtml">Title Page</a></li>')
-        if chapters:
+        start = self._body_start(chapters)
+        if start is not None:
             landmarks.append(
-                f'      <li><a epub:type="bodymatter" href="{html.escape(chapters[0].file_name)}">Start of Content</a></li>'
+                f'      <li><a epub:type="bodymatter" href="{html.escape(start.file_name)}">Start of Content</a></li>'
             )
         return (
             '<?xml version="1.0" encoding="utf-8"?>\n'
