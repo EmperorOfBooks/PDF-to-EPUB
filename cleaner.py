@@ -21,6 +21,9 @@ from inline import LEADING_MARKER_RE, link_note_refs, normalize_marker, strip_ma
 from layout import LayoutAnalyzer
 from telemetry import ConversionStats
 
+VERSE_CENTER_TOLERANCE = 0.04
+VERSE_MIN_RAGGED_SPREAD = 0.04
+VERSE_MAX_LINE_WIDTH = 0.72
 COPYRIGHT_SEARCH_PAGES = 12
 COPYRIGHT_EXCLUDED_LINE = re.compile(
     r"^(?:ISBN(?:-1[03])?\b|LCCN\b|Library of Congress Control Number\b|Printed in the United States of America\b)",
@@ -392,7 +395,7 @@ class PdfCleaner:
             )
 
         order = self.layout.xy_cut_order([element.bbox for element in elements], page.width, page.height)
-        elements = [elements[index] for index in order]
+        elements = self._group_verse([elements[index] for index in order], page)
 
         items: list[FlowTextUnit | FlowImageUnit | FlowTableUnit | FlowNoteUnit] = []
         current_text = ""
@@ -440,6 +443,33 @@ class PdfCleaner:
                     )
                     current_text = ""
                 items.append(element)
+                continue
+
+            if element.kind == "verse":
+                if current_text:
+                    items.append(
+                        FlowTextUnit(
+                            kind="paragraph",
+                            text=current_text.strip(),
+                            y=current_y,
+                            page_number=current_page,
+                            font_size=current_font_size,
+                            bold_ratio=current_bold_ratio,
+                            level=0,
+                        )
+                    )
+                    current_text = ""
+                items.append(
+                    FlowTextUnit(
+                        kind="verse",
+                        text=element.text,
+                        y=element.y,
+                        page_number=element.page_number,
+                        font_size=element.font_size,
+                        bold_ratio=element.bold_ratio,
+                        level=0,
+                    )
+                )
                 continue
 
             if element.kind == "code":
@@ -577,6 +607,62 @@ class PdfCleaner:
             )
 
         return items + note_units
+
+    @staticmethod
+    def _group_verse(elements: list, page: PageData) -> list:
+        """Collapse runs of centered, ragged short lines (poems, epigraphs, dedications) into verse units."""
+
+        def is_line(element) -> bool:
+            return isinstance(element, FlowLineUnit) and element.kind == "line" and element.bbox[2] > element.bbox[0]
+
+        def is_verse_run(run: list[FlowLineUnit]) -> bool:
+            if len(run) < 2:
+                return False
+            centers = [(line.bbox[0] + line.bbox[2]) / 2.0 for line in run]
+            lefts = [line.bbox[0] for line in run]
+            rights = [line.bbox[2] for line in run]
+            tolerance = page.width * VERSE_CENTER_TOLERANCE
+            return (
+                all(abs(center - page.width / 2.0) <= tolerance for center in centers)
+                and max(centers) - min(centers) <= tolerance
+                and max(lefts) - min(lefts) >= page.width * VERSE_MIN_RAGGED_SPREAD
+                and max(rights) - min(rights) >= page.width * VERSE_MIN_RAGGED_SPREAD
+                and all(right - left <= page.width * VERSE_MAX_LINE_WIDTH for left, right in zip(lefts, rights))
+            )
+
+        grouped: list = []
+        index = 0
+        while index < len(elements):
+            if not is_line(elements[index]):
+                grouped.append(elements[index])
+                index += 1
+                continue
+            end = index
+            while end < len(elements) and is_line(elements[end]):
+                end += 1
+            run = elements[index:end]
+            if is_verse_run(run):
+                grouped.append(
+                    FlowLineUnit(
+                        kind="verse",
+                        text="\n".join(line.text for line in run),
+                        y=run[0].y,
+                        x=min(line.x for line in run),
+                        page_number=run[0].page_number,
+                        font_size=max(line.font_size for line in run),
+                        bold_ratio=max(line.bold_ratio for line in run),
+                        bbox=(
+                            min(line.bbox[0] for line in run),
+                            run[0].bbox[1],
+                            max(line.bbox[2] for line in run),
+                            run[-1].bbox[3],
+                        ),
+                    )
+                )
+            else:
+                grouped.extend(run)
+            index = end
+        return grouped
 
     def _can_merge_page_continuation(
         self,

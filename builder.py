@@ -109,6 +109,7 @@ th, td { border: 1px solid #999; padding: 0.25em 0.5em; text-indent: 0; text-ali
 th { background: #eee; }
 section.titlepage { text-align: center; margin-top: 15%; }
 section.titlepage h1, section.titlepage h2 { text-align: center; }
+p.verse { text-indent: 0; text-align: center; margin: 1.5em 0; }
 p.doc-author, p.doc-imprint { text-indent: 0; text-align: center; margin: 0.8em 0; }
 p.doc-author { font-size: 1.2em; }
 p.doc-imprint { font-size: 0.9em; color: #444; }
@@ -428,6 +429,11 @@ class EpubBuilder:
                     tag = "h1" if item.is_chapter_heading else "h2"
                     class_attr = ' class="chapter-title"' if tag == "h1" else ""
                     html_parts.append(f"<{tag}{class_attr}>{html.escape(heading_text)}</{tag}>")
+                elif item.kind == "verse":
+                    verse_lines = "<br />".join(
+                        self._render_inline(line, seen_refs, file_name) for line in item.text.split("\n")
+                    )
+                    html_parts.append(f'<p class="verse">{verse_lines}</p>')
                 elif item.kind == "code":
                     html_parts.append(f"<pre><code>{html.escape(item.text, quote=False)}</code></pre>")
                 else:

@@ -251,6 +251,34 @@ class PdfPipelineTests(unittest.TestCase):
                 'Edited by John Roe',
             ],
         )
+    def test_centered_ragged_lines_become_verse_not_a_run_on_paragraph(self):
+        def block(i, y, left, right, text):
+            line = LineData(text, (left, y, right, y + 14.0), ())
+            return TextBlockData(1, i, (left, y, right, y + 14.0), (line,), text, 14.0, 14.0, 0.0)
+
+        lines = (
+            (99.0, 297.0, 'One bright everlasting light to guide them all'),
+            (96.0, 300.0, 'In the land of light where the moon doth shine'),
+            (116.0, 280.0, 'One mystic unknown behind them all'),
+            (137.0, 260.0, 'One circlet for her protector'),
+        )
+        blocks = tuple(block(i, 100.0 + i * 19.0, left, right, text) for i, (left, right, text) in enumerate(lines))
+        items = PdfCleaner()._page_items(PageData(1, 396.0, 612.0, blocks, ()), 14.0, set())
+
+        verses = [item for item in items if isinstance(item, FlowTextUnit) and item.kind == 'verse']
+        self.assertEqual(len(verses), 1)
+        self.assertEqual(verses[0].text.split('\n'), [text for _, _, text in lines])
+
+    def test_left_aligned_wrapped_body_lines_are_not_verse(self):
+        def block(i, y, text):
+            line = LineData(text, (54.0, y, 342.0, y + 14.0), ())
+            return TextBlockData(1, i, (54.0, y, 342.0, y + 14.0), (line,), text, 14.0, 14.0, 0.0)
+
+        blocks = tuple(block(i, 100.0 + i * 15.0, text) for i, text in enumerate(
+            ('The world of Varis Mogul is a tapestry woven from a lifetime of', 'inspiration. The groundbreaking works of J.R.R. Tolkien.')))
+        items = PdfCleaner()._page_items(PageData(1, 396.0, 612.0, blocks, ()), 14.0, set())
+
+        self.assertEqual([item.kind for item in items], ['paragraph'])
     def test_subheading_does_not_create_new_chapter_file(self):
         blocks = (
             TextBlockData(1, 0, (40.0, 80.0, 300.0, 100.0), (), 'Chapter 1', 18.0, 18.0, 0.8),
