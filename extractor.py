@@ -252,7 +252,7 @@ class PdfExtractor:
                         font = text_obj.get_font()
                         name = str(font.get_base_name() or "")
                         weight = int(font.get_weight() or 0)
-                        flags = 16 if weight >= _BOLD_WEIGHT_THRESHOLD else 0
+                        flags = 16 if weight >= _BOLD_WEIGHT_THRESHOLD and not is_italic_span(name, 0) else 0
                         origin_y = page_height - float(text_obj.get_matrix().f)
                         result = (name, size, flags, origin_y)
                     except Exception:
