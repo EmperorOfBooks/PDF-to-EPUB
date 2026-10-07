@@ -48,6 +48,8 @@ p {
   hyphens: auto;
 }
 
+p.scene-break { margin: 1.5em 0; text-align: center; text-indent: 0; letter-spacing: 0.2em; }
+
 h1, h2, h3 {
   text-align: left;
   text-indent: 0;
@@ -129,6 +131,17 @@ INLINE_TAGS = {
     SUB_OPEN: "<sub>",
     SUB_CLOSE: "</sub>",
 }
+
+LEGAL_ATTRIBUTIONS = (
+    ("PyMuPDF / fitz", "AGPL-3.0 or commercial license; Artifex Software, Inc."),
+    ("Pillow", "HPND License; Alex Clark and Pillow contributors."),
+    ("EbookLib", "LGPL-3.0; Aleksandar Erkalović and contributors."),
+    ("pyphen", "LGPL-2.1+, MPL-1.1, or GPL-2.0+; Guillaume Ayoub and contributors."),
+    ("ftfy", "Apache License 2.0; Luminoso Technologies, Inc."),
+    ("lxml", "BSD-3-Clause and ZPL-2.0; lxml project."),
+    ("pypandoc", "MIT License; Juho Vepsäläinen and contributors."),
+    ("python-docx", "MIT License; Steve Canny and contributors."),
+)
 
 
 @dataclass
@@ -232,6 +245,12 @@ class EpubBuilder:
             chapter_items.append(html_item)
             spine.append(html_item)
 
+        content_chapter_count = len(chapter_items)
+        legal_item = self._build_legal_chapter()
+        items.append(legal_item)
+        chapter_items.append(legal_item)
+        spine.append(legal_item)
+
         nav = PackageItem(
             "nav.xhtml",
             "application/xhtml+xml",
@@ -252,7 +271,29 @@ class EpubBuilder:
             files[f"EPUB/{item.file_name}"] = (item.content, item.media_type.startswith("image/") is False)
         self._write_zip(files, zip_stamp)
         counts = dict(self._counts)
-        return BuildResult(output_path=self.output_path, counts=counts, chapter_files=len(chapter_items))
+        return BuildResult(output_path=self.output_path, counts=counts, chapter_files=content_chapter_count)
+
+    def _build_legal_chapter(self) -> PackageItem:
+        attribution_items = "".join(
+            f"<li><strong>{html.escape(name)}</strong>: {html.escape(terms)}</li>"
+            for name, terms in LEGAL_ATTRIBUTIONS
+        )
+        body = (
+            '<h1 class="chapter-title">About This Edition &amp; Licensing</h1>'
+            '<p>This edition was converted using the EmperorOfBooks PDF-to-EPUB engine.</p>'
+            '<section aria-labelledby="third-party-attributions"><h2 id="third-party-attributions">'
+            f'Third-Party Attributions</h2><ul>{attribution_items}</ul></section>'
+            '<p>Repository license and notices: '
+            '<a href="https://github.com/EmperorOfBooks/PDF-to-EPUB">EmperorOfBooks/PDF-to-EPUB</a>.</p>'
+        )
+        return PackageItem(
+            "text/colophon_legal.xhtml",
+            "application/xhtml+xml",
+            self._wrap_xhtml("About This Edition & Licensing", body, "../").encode("utf-8"),
+            "colophon_legal",
+            "",
+            "About This Edition & Licensing",
+        )
 
     @staticmethod
     def _item_id(item: PackageItem) -> str:
@@ -452,7 +493,9 @@ class EpubBuilder:
                 item_index += 1
                 continue
             if isinstance(item, FlowTextUnit):
-                if item.kind == "heading":
+                if item.kind == "scene-break":
+                    html_parts.append(f'<p class="scene-break">{html.escape(item.text)}</p>')
+                elif item.kind == "heading":
                     heading_text = item.text.strip()
                     next_item = chapter.items[item_index + 1] if item_index + 1 < len(chapter.items) else None
                     if isinstance(next_item, FlowTextUnit) and next_item.kind == "heading":

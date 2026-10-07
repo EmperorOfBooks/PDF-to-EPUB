@@ -172,7 +172,7 @@ class OfficeExtractor:
 
     @staticmethod
     def _fix_text(text: str) -> str:
-        return " ".join(ftfy.fix_text(text).split())
+        return " ".join(re.sub("[\u200b\u2060\ufeff]", "", ftfy.fix_text(text)).split())
 
     @staticmethod
     def _pandoc_inlines(inlines: Iterable[dict[str, Any]]) -> str:

@@ -12,12 +12,17 @@ from config import (
     FONT_SIZE_HEADLINE_DELTA,
     FONT_SIZE_HEADLINE_MULTIPLIER,
     PAGE_NUMBER_PATTERN,
-    TERMINAL_PUNCTUATION,
     PARAGRAPH_X_TOLERANCE,
 )
 from cover import COVER_IMAGE, CoverInfo, TitlePage, detect_cover, parse_title_page
 from extractor import ExtractedDocument, PageData, TableData, TextBlockData
-from inline import LEADING_MARKER_RE, link_note_refs, normalize_marker, strip_markup
+from inline import (
+    LEADING_MARKER_RE,
+    link_note_refs,
+    normalize_invisible_separators,
+    normalize_marker,
+    strip_markup,
+)
 from layout import LayoutAnalyzer
 from telemetry import ConversionStats
 
@@ -247,6 +252,9 @@ class PdfCleaner:
             normalized_block_text = self._normalize_text(block.text)
             if not normalized_block_text:
                 continue
+            if self.layout.is_watermark(page, block, body_font_size):
+                self._drop(page, block.bbox, "watermark", block.text)
+                continue
             if normalized_block_text in repeated_margin_texts:
                 self._drop(page, block.bbox, "running_header_footer", block.text)
                 continue
@@ -255,6 +263,21 @@ class PdfCleaner:
                 continue
             if PAGE_NUMBER_PATTERN.match(normalized_block_text):
                 self._drop(page, block.bbox, "page_number", block.text)
+                continue
+
+            if self._is_scene_break(normalized_block_text):
+                elements.append(
+                    FlowLineUnit(
+                        kind="scene-break",
+                        text=normalized_block_text,
+                        y=float(block.bbox[1]),
+                        x=float(block.bbox[0]),
+                        page_number=page.page_number,
+                        font_size=block.max_font_size or body_font_size,
+                        bold_ratio=block.bold_ratio,
+                        bbox=block.bbox,
+                    )
+                )
                 continue
 
             if block.is_code:
@@ -406,6 +429,32 @@ class PdfCleaner:
                 items.append(element)
                 continue
 
+            if element.kind == "scene-break":
+                if current_text:
+                    items.append(
+                        FlowTextUnit(
+                            kind="paragraph",
+                            text=current_text.strip(),
+                            y=current_y,
+                            page_number=current_page,
+                            font_size=current_font_size,
+                            bold_ratio=current_bold_ratio,
+                            level=0,
+                        )
+                    )
+                    current_text = ""
+                items.append(
+                    FlowTextUnit(
+                        kind="scene-break",
+                        text=element.text,
+                        y=element.y,
+                        page_number=element.page_number,
+                        font_size=element.font_size,
+                        bold_ratio=element.bold_ratio,
+                    )
+                )
+                continue
+
             if element.kind == "code":
                 if current_text:
                     items.append(
@@ -504,7 +553,7 @@ class PdfCleaner:
                 current_text = self._strip_trailing_hyphen(current_text) + element.text.lstrip()
                 current_font_size = max(current_font_size, element.font_size)
                 current_bold_ratio = max(current_bold_ratio, element.bold_ratio)
-            elif (plain_element and plain_element[0].islower()) or not plain_current.endswith(TERMINAL_PUNCTUATION):
+            elif not self._ends_sentence(current_text):
                 current_text = f"{current_text} {element.text}"
                 current_font_size = max(current_font_size, element.font_size)
                 current_bold_ratio = max(current_bold_ratio, element.bold_ratio)
@@ -556,8 +605,7 @@ class PdfCleaner:
             return False
         if previous.page_number == item.page_number:
             return False
-        text = re.sub(r"[\"'”’]+$", "", strip_markup(previous.text).rstrip()).rstrip()
-        return not text.endswith((".", "!", "?", ":"))
+        return not self._ends_sentence(previous.text)
 
     @staticmethod
     def _strip_trailing_hyphen(text: str) -> str:
@@ -569,7 +617,8 @@ class PdfCleaner:
             width = line.bbox[2] - line.bbox[0]
             pitch = width / max(len(line.text), 1)
             indent = int(round((line.bbox[0] - block.bbox[0]) / pitch)) if pitch > 0 else 0
-            lines.append(" " * max(indent, 0) + line.text.rstrip())
+            text = normalize_invisible_separators(line.text).strip()
+            lines.append(" " * max(indent, 0) + text)
         return FlowLineUnit(
             kind="code",
             text="\n".join(lines),
@@ -762,12 +811,15 @@ class PdfCleaner:
         return bool(flags & 16)
 
     def _normalize_text(self, text: str) -> str:
-        return re.sub(r"\s+", " ", ftfy.fix_text(text)).strip()
+        normalized = normalize_invisible_separators(ftfy.fix_text(text))
+        return re.sub(r"\s+", " ", normalized).strip()
 
     def _is_noise_text(self, text: str) -> bool:
         compact = re.sub(r"\s+", "", strip_markup(text))
         if not compact:
             return True
+        if self._is_scene_break(text):
+            return False
         if len(compact) <= 4 and re.fullmatch(r"[0-9&GS]+", compact, flags=re.IGNORECASE):
             return True
         if re.search(r"[A-Za-z]", compact):
@@ -775,3 +827,13 @@ class PdfCleaner:
         if len(compact) <= 6:
             return True
         return bool(re.fullmatch(r"[\W\d_]+", compact))
+
+    @staticmethod
+    def _ends_sentence(text: str) -> bool:
+        stripped = re.sub(r"""[\s"'”’»›)\]]+$""", "", text)
+        return bool(stripped and stripped[-1] in (".", "!", "?", ":"))
+
+    @staticmethod
+    def _is_scene_break(text: str) -> bool:
+        compact = re.sub(r"\s+", "", text)
+        return bool(re.fullmatch(r"(?:\*{3,}|~{3,}|-{3,})", compact))

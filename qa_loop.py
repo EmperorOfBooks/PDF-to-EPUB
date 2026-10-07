@@ -92,6 +92,8 @@ def looks_like_junk(text):
     compact = re.sub(r"\s+", "", text or "")
     if not compact:
         return False
+    if re.fullmatch(r"(?:\*{3,}|~{3,}|-{3,})", compact):
+        return False
     if re.search(r"[A-Za-z]", compact):
         return False
     return len(compact) <= 6 or bool(re.fullmatch(r"[\W\d_]+", compact))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
 from math import ceil
@@ -9,11 +10,15 @@ from typing import Iterable, Sequence
 from config import (
     HEADER_FOOTER_MARGIN_RATIO,
     HEADER_REPEAT_RATIO,
+    PAGE_NUMBER_PATTERN,
     MIN_HEADER_REPEAT_COUNT,
     XY_CUT_MIN_BAND_GAP,
     XY_CUT_MIN_GUTTER,
 )
 from extractor import PageData, TextBlockData
+
+
+PAGE_LABEL_PATTERN = re.compile(r"^(?:page\s+\d+(?:\s+of\s+\d+)?|\d+\s+of\s+\d+|[-–—]\s*\d+\s*[-–—])$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -77,7 +82,17 @@ class LayoutAnalyzer:
     def is_margin_artifact(self, page: PageData, block: TextBlockData, body_font_size: float) -> bool:
         if len(block.lines) != 1 or block.max_font_size > body_font_size * 1.05:
             return False
-        return block.bbox[3] <= page.height * 0.07 or block.bbox[1] >= page.height * 0.93
+        is_header = block.bbox[3] <= page.height * 0.10
+        is_footer = block.bbox[1] >= page.height * 0.90
+        if not (is_header or is_footer):
+            return False
+        text = self.normalize(block.text)
+        return bool(PAGE_NUMBER_PATTERN.match(text) or PAGE_LABEL_PATTERN.match(text))
+
+    def is_watermark(self, page: PageData, block: TextBlockData, body_font_size: float) -> bool:
+        oversized = block.max_font_size >= body_font_size * 6.0
+        off_page = block.bbox[0] < 0 or block.bbox[2] > page.width or block.bbox[1] < 0 or block.bbox[3] > page.height
+        return oversized and off_page
 
     def ordered_blocks(self, page: PageData, blocks: Iterable[TextBlockData] | None = None) -> list[TextBlockData]:
         candidates = list(blocks if blocks is not None else page.text_blocks)

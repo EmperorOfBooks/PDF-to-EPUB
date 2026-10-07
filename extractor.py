@@ -16,7 +16,6 @@ from inline import (
     is_bold_span,
     is_italic_span,
     is_mono_font,
-    is_uniform_pitch,
     render_runs,
     span_position,
     sup_tokens,
@@ -294,7 +293,6 @@ class PdfExtractor:
         lines: list[LineData] = []
         spans: list[SpanData] = []
         texts: list[str] = []
-        block_pitch_samples: list[tuple[str, float]] = []
         for line in block.get("lines", []):
             line_spans: list[SpanData] = []
             runs: list[StyledRun] = []
@@ -323,8 +321,6 @@ class PdfExtractor:
                 if text.strip():
                     if not is_mono_font(font, flags):
                         all_mono = False
-                    bbox = span.get("bbox", (0, 0, 0, 0))
-                    block_pitch_samples.append((text, float(bbox[2] - bbox[0])))
             line_text = "".join(span.text for span in line_spans).strip()
             if not line_text:
                 continue
@@ -359,7 +355,7 @@ class PdfExtractor:
             bold_ratio=bold_ratio,
             is_code=(
                 len(lines) >= 1
-                and all(line.is_code or is_uniform_pitch(block_pitch_samples) for line in lines)
+                and all(line.is_code for line in lines)
                 and sum(len(line.text) for line in lines) >= 8
             ),
         )

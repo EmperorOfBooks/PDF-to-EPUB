@@ -15,3 +15,6 @@ epubcheck.zip
 qa_visual/
 test_batch/
 source_code_dump.txt
+
+.validation/
+*.msi

@@ -22,6 +22,8 @@ NOTE_RE = re.compile(f"{NOTE_OPEN}(\\d+){NOTE_MID}(.*?){NOTE_CLOSE}", re.DOTALL)
 SUP_TOKEN_RE = re.compile(f"{SUP_OPEN}([^{SUP_CLOSE}]*){SUP_CLOSE}")
 NOTE_MARKER_RE = re.compile(r"^(?:\[\d{1,3}\]|\d{1,3}|[*†‡§¶]{1,3})$")
 LEADING_MARKER_RE = re.compile(r"^(\[\d{1,3}\]|\d{1,3}(?!\d)|[*†‡§¶]{1,3})[\.\):]?\s*(?=\S)")
+ZERO_WIDTH_SPACE_RE = re.compile("\u200b+")
+ZERO_WIDTH_NONBREAK_RE = re.compile("[\u2060\ufeff]")
 
 MONO_NAME_HINTS = ("mono", "courier", "consolas", "menlo", "typewriter", "lucida console", "inconsolata", "source code")
 BOLD_NAME_HINTS = ("bold", "black", "heavy", "semibold", "demi")
@@ -34,6 +36,12 @@ def strip_markup(text: str) -> str:
     """Return visible text with all inline sentinels removed (note refs keep their label)."""
     text = NOTE_RE.sub(lambda match: match.group(2), text)
     return SENTINEL_RE.sub("", text)
+
+
+def normalize_invisible_separators(text: str) -> str:
+    """Turn extracted zero-width word separators into spaces and remove format marks."""
+    text = ZERO_WIDTH_SPACE_RE.sub(" ", text)
+    return ZERO_WIDTH_NONBREAK_RE.sub("", text)
 
 
 def normalize_marker(marker: str) -> str:

@@ -9,7 +9,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
 
-from inline import strip_markup
+from inline import normalize_invisible_separators, strip_markup
 
 if TYPE_CHECKING:  # pragma: no cover
     from extractor import PageData
@@ -216,7 +216,7 @@ def parse_title_page(page: "PageData") -> TitlePage:
     lines: list[tuple[str, float, float]] = []
     for block in page.text_blocks:
         for line in block.lines:
-            text = " ".join(strip_markup(line.text).split())
+            text = " ".join(normalize_invisible_separators(strip_markup(line.text)).split())
             if text:
                 size = max((span.size for span in line.spans if span.text.strip()), default=block.max_font_size)
                 lines.append((text, round(size * 2) / 2, line.bbox[1]))
