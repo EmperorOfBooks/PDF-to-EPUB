@@ -6,6 +6,7 @@ import re
 import uuid
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowNoteUnit, FlowTableUnit, FlowTextUnit
@@ -156,7 +157,7 @@ class EpubBuilder:
         self._note_files: dict[int, str] = {}
         self._counts = {"tables": 0, "images": 0, "figures": 0, "notes": 0, "note_refs": 0}
 
-    def build(self, document: CleanedDocument) -> BuildResult:
+    def build(self, document: CleanedDocument, include_colophon: bool = False) -> BuildResult:
         self._note_files = {}
         self._counts = {"tables": 0, "images": 0, "figures": 0, "notes": 0, "note_refs": 0}
         for chapter_index, chapter in enumerate(document.chapters, start=1):
@@ -232,6 +233,26 @@ class EpubBuilder:
             chapter_items.append(html_item)
             spine.append(html_item)
 
+        if include_colophon:
+            generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            colophon = PackageItem(
+                "text/colophon.xhtml",
+                "application/xhtml+xml",
+                self._wrap_xhtml(
+                    "Colophon",
+                    "<h1>Colophon</h1>"
+                    f"<p>This EPUB edition of <em>{html.escape(self.title)}</em> was generated automatically "
+                    "from the source document using the EmperorOfBooks PDF-to-EPUB conversion engine.</p>"
+                    f"<p>Generated: {html.escape(generated_at)}</p>",
+                ).encode("utf-8"),
+                "colophon",
+                "",
+                "Colophon",
+            )
+            items.append(colophon)
+            chapter_items.append(colophon)
+            spine.append(colophon)
+
         nav = PackageItem(
             "nav.xhtml",
             "application/xhtml+xml",
@@ -252,7 +273,11 @@ class EpubBuilder:
             files[f"EPUB/{item.file_name}"] = (item.content, item.media_type.startswith("image/") is False)
         self._write_zip(files, zip_stamp)
         counts = dict(self._counts)
-        return BuildResult(output_path=self.output_path, counts=counts, chapter_files=len(chapter_items))
+        return BuildResult(
+            output_path=self.output_path,
+            counts=counts,
+            chapter_files=len(chapter_items) - int(include_colophon),
+        )
 
     @staticmethod
     def _item_id(item: PackageItem) -> str:
@@ -522,8 +547,9 @@ class EpubBuilder:
             scope = ' scope="col"' if tag == "th" else ""
             return "".join(f"<{tag}{scope}>{html.escape(' '.join(cell.split()))}</{tag}>" for cell in row)
 
-        head = f"<thead><tr>{cells(padded[0], 'th')}</tr></thead>"
-        body_rows = "".join(f"<tr>{cells(row, 'td')}</tr>" for row in padded[1:])
+        head = f"<thead><tr>{cells(padded[0], 'th')}</tr></thead>" if table.has_header_row else ""
+        body_source = padded[1:] if table.has_header_row else padded
+        body_rows = "".join(f"<tr>{cells(row, 'td')}</tr>" for row in body_source)
         body = f"<tbody>{body_rows}</tbody>" if body_rows else ""
         return f"<table>{head}{body}</table>"
 

@@ -1,4 +1,7 @@
 import unittest
+import os
+import tempfile
+import zipfile
 
 from cleaner import ChapterContent, FlowImageUnit, FlowTextUnit, PdfCleaner
 from epub_builder import EPUB_CSS, EpubBuilder
@@ -94,12 +97,11 @@ class PdfPipelineTests(unittest.TestCase):
             )
         )
 
-    def test_clean_heading_normalizes_observed_chapter_fourteen_marker(self):
+    def test_clean_heading_strips_trailing_page_markers(self):
         cleaner = PdfCleaner()
 
-        self.assertEqual(cleaner._clean_heading_text('Chapter 1&'), 'Chapter 14')
-        self.assertEqual(cleaner._clean_heading_text('Chapter &'), 'Chapter 4')
-        self.assertEqual(cleaner._clean_heading_text('Chapter S'), 'Chapter 5')
+        self.assertEqual(cleaner._clean_heading_text('Chapter One pg. 12'), 'Chapter One')
+        self.assertEqual(cleaner._clean_heading_text('Chapter Two -'), 'Chapter Two')
 
     def test_lowercase_block_continuation_is_joined_after_terminal_punctuation(self):
         first_block = TextBlockData(
@@ -219,6 +221,36 @@ class PdfPipelineTests(unittest.TestCase):
 
         self.assertEqual(len(cleaned.chapters), 1)
         self.assertIn('The Calling', cleaned.chapters[0].title)
+
+    def test_colophon_is_omitted_by_default_and_included_when_requested(self):
+        chapter = ChapterContent(
+            title='Chapter 1',
+            items=(FlowTextUnit(kind='heading', text='Chapter 1', y=10.0, page_number=1, font_size=18.0, bold_ratio=0.8),),
+        )
+        from cleaner import CleanedDocument
+
+        document = CleanedDocument(chapters=(chapter,))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            default_path = os.path.join(temp_dir, 'default.epub')
+            colophon_path = os.path.join(temp_dir, 'colophon.epub')
+            EpubBuilder(default_path).build(document)
+            EpubBuilder(colophon_path).build(document, include_colophon=True)
+
+            with zipfile.ZipFile(default_path) as archive:
+                default_names = archive.namelist()
+            with zipfile.ZipFile(colophon_path) as archive:
+                colophon_names = archive.namelist()
+
+            self.assertFalse(any('colophon' in name.lower() for name in default_names))
+            self.assertTrue(any('colophon' in name.lower() for name in colophon_names))
+
+    def test_ocr_heuristics_flag_filters_repeated_character_noise(self):
+        cleaner_default = PdfCleaner()
+        cleaner_ocr = PdfCleaner(ocr_heuristics=True)
+
+        self.assertFalse(cleaner_default._is_noise_text('zzzzzz'))
+        self.assertTrue(cleaner_ocr._is_noise_text('zzzzzz'))
 
 
 if __name__ == '__main__':

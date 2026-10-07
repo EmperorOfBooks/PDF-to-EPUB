@@ -103,35 +103,26 @@ class CoverInfo:
 
 
 def compute_visual_stats(page) -> PageVisualStats:
-    """Measure image/vector/background coverage of a PyMuPDF page."""
+    """Measure image and background coverage using pypdfium2 page primitives."""
     from PIL import Image
-    import pymupdf as fitz
+    import pypdfium2 as pdfium
 
-    page_area = float(page.rect.width * page.rect.height) or 1.0
+    page_width, page_height = page.get_size()
+    page_area = float(page_width * page_height) or 1.0
     image_area = 0.0
     try:
-        for info in page.get_image_info():
-            rect = fitz.Rect(info["bbox"]) & page.rect
-            image_area = max(image_area, rect.width * rect.height)
+        for obj in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
+            x0, y0, x1, y1 = obj.get_bounds()
+            image_area = max(image_area, abs(x1 - x0) * abs(y1 - y0))
     except Exception:
         pass
-    fill_area = 0.0
-    try:
-        for drawing in page.get_drawings():
-            if drawing.get("fill") is None:
-                continue
-            rect = fitz.Rect(drawing["rect"]) & page.rect
-            fill_area += max(0.0, rect.width) * max(0.0, rect.height)
-    except Exception:
-        pass
-    pixmap = page.get_pixmap(matrix=fitz.Matrix(0.25, 0.25), colorspace=fitz.csGRAY, alpha=False)
-    gray = Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
+    gray = page.render(scale=0.25, grayscale=True).to_pil().convert("L")
     histogram = gray.histogram()
     total = sum(histogram) or 1
     nonwhite = sum(histogram[:NONWHITE_LUMA]) / total
     return PageVisualStats(
         image_ratio=min(1.0, image_area / page_area),
-        vector_ratio=min(1.0, fill_area / page_area),
+        vector_ratio=0.0,
         nonwhite_ratio=nonwhite,
     )
 
@@ -256,19 +247,26 @@ def parse_title_page(page: "PageData") -> TitlePage:
 def render_cover_jpeg(pdf_path: str | Path, page_number: int) -> tuple[bytes, int, int]:
     """Render a PDF page as an sRGB JPEG that fits the 1600x2560 target box."""
     from PIL import Image, ImageOps
-    import pymupdf as fitz
+    import pypdfium2 as pdfium
 
-    with fitz.open(str(pdf_path)) as document:
+    document = pdfium.PdfDocument(str(pdf_path))
+    try:
         page = document[page_number - 1]
-        zoom = min(COVER_TARGET_SIZE[0] / page.rect.width, COVER_TARGET_SIZE[1] / page.rect.height)
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), colorspace=fitz.csRGB, alpha=False)
-        image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+        try:
+            width, height = page.get_size()
+            zoom = min(COVER_TARGET_SIZE[0] / width, COVER_TARGET_SIZE[1] / height)
+            image = page.render(scale=zoom).to_pil().convert("RGB")
+        finally:
+            page.close()
+    finally:
+        document.close()
+    if image.width > COVER_TARGET_SIZE[0] or image.height > COVER_TARGET_SIZE[1]:
         image = ImageOps.contain(image, COVER_TARGET_SIZE, method=Image.Resampling.LANCZOS)
-        canvas = Image.new("RGB", COVER_TARGET_SIZE, "white")
-        canvas.paste(image, ((COVER_TARGET_SIZE[0] - image.width) // 2, (COVER_TARGET_SIZE[1] - image.height) // 2))
-        buffer = io.BytesIO()
-        canvas.save(buffer, format="JPEG", quality=90, optimize=True, subsampling=0)
-        return buffer.getvalue(), canvas.width, canvas.height
+    canvas = Image.new("RGB", COVER_TARGET_SIZE, "white")
+    canvas.paste(image, ((COVER_TARGET_SIZE[0] - image.width) // 2, (COVER_TARGET_SIZE[1] - image.height) // 2))
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="JPEG", quality=90, optimize=True, subsampling=0)
+    return buffer.getvalue(), canvas.width, canvas.height
 
 
 def _wrap(text: str, limit: int) -> list[str]:

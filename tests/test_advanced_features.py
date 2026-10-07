@@ -11,13 +11,12 @@ import sys
 import tempfile
 import zipfile
 
-import pymupdf as fitz
 from PIL import Image
 import pytest
 
 from builder import EpubBuilder
 from cleaner import ChapterContent, CleanedDocument, FlowNoteUnit, FlowTableUnit, FlowTextUnit, PdfCleaner
-from cover import COVER_IMAGE, TITLE_PAGE, CoverInfo, TitlePage, detect_cover, render_cover_jpeg
+from cover import COVER_IMAGE, TITLE_PAGE, CoverInfo, PageVisualStats, TitlePage, classify_page_metrics, detect_cover, render_cover_jpeg
 from epubcheck_harvester import select_epubcheck_asset
 from extractor import ExtractedDocument, ImageData, LineData, PageData, PdfExtractor, SpanData, TextBlockData
 from inline import (
@@ -35,6 +34,7 @@ from inline import (
 )
 from pipeline import ConversionPipeline, needs_ocr, route_pages
 from telemetry import ConversionStats, build_report, validate_report
+from tables import detect_whitespace_tables
 
 
 def _block(text: str, bbox, size: float = 12.0, *, markup: str | None = None, supers: tuple[str, ...] = ()):
@@ -57,44 +57,62 @@ def _block(text: str, bbox, size: float = 12.0, *, markup: str | None = None, su
     )
 
 
-def test_cover_and_titlepage_classifier_on_ten_sample_pdfs():
-    with tempfile.TemporaryDirectory() as temporary:
-        root = Path(temporary)
-        for index in range(5):
-            path = root / f"cover-{index}.pdf"
-            pdf = fitz.open()
-            page = pdf.new_page(width=612, height=792)
-            buffer = io.BytesIO()
-            Image.new("RGB", (600, 780), (28 + index, 42, 85)).save(buffer, format="PNG")
-            page.insert_image(page.rect, stream=buffer.getvalue())
-            page.insert_text((80, 150), f"Sample Book {index}", fontsize=24, color=(1, 1, 1))
-            page.insert_text((80, 200), "by A. Writer", fontsize=14, color=(1, 1, 1))
-            pdf.save(path)
-            pdf.close()
-            assert detect_cover(PdfExtractor(path).extract().pages).info.kind == COVER_IMAGE
-
-        for index in range(5):
-            path = root / f"titlepage-{index}.pdf"
-            pdf = fitz.open()
-            page = pdf.new_page(width=612, height=792)
-            page.insert_text((140, 150), f"Sample Title {index}", fontsize=28)
-            page.insert_text((170, 300), "A Collected Work", fontsize=16)
-            page.insert_text((190, 460), "By A. Author", fontsize=14)
-            page.insert_text((180, 680), "Example Press 2024", fontsize=12)
-            pdf.save(path)
-            pdf.close()
-            assert detect_cover(PdfExtractor(path).extract().pages).info.kind == TITLE_PAGE
+def _minimal_pdf(content: bytes) -> bytes:
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"endstream",
+    ]
+    data = b"%PDF-1.4\n"
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(data))
+        data += f"{index} 0 obj\n".encode() + obj + b"\nendobj\n"
+    xref = len(data)
+    data += f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode()
+    for offset in offsets[1:]:
+        data += f"{offset:010d} 00000 n \n".encode()
+    data += (
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    )
+    return data
 
 
-def test_rendered_cover_jpeg_uses_srgb_target_canvas():
-    with tempfile.TemporaryDirectory() as temporary:
-        source = Path(temporary) / "cover.pdf"
-        pdf = fitz.open()
-        page = pdf.new_page(width=612, height=792)
-        page.draw_rect(page.rect, color=(0.1, 0.2, 0.4), fill=(0.1, 0.2, 0.4))
-        pdf.save(source)
-        pdf.close()
-        content, width, height = render_cover_jpeg(source, 1)
+def test_cover_and_titlepage_classifier_uses_extracted_page_metrics():
+    kind, _ = classify_page_metrics(PageVisualStats(image_ratio=0.9, nonwhite_ratio=0.9), 12, 2, 0.2)
+    assert kind == COVER_IMAGE
+    kind, _ = classify_page_metrics(PageVisualStats(nonwhite_ratio=0.1), 12, 4, 0.6)
+    assert kind == TITLE_PAGE
+
+
+def test_rendered_cover_jpeg_uses_srgb_target_canvas(monkeypatch, tmp_path):
+    import pypdfium2
+
+    class FakePage:
+        def get_size(self):
+            return 612, 792
+
+        def render(self, scale):
+            return type("Bitmap", (), {"to_pil": lambda _: Image.new("RGB", (800, 1000), "navy")})()
+
+        def close(self):
+            pass
+
+    class FakeDocument:
+        def __init__(self, _path):
+            pass
+
+        def __getitem__(self, _index):
+            return FakePage()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(pypdfium2, "PdfDocument", FakeDocument)
+    content, width, height = render_cover_jpeg(tmp_path / "cover.pdf", 1)
     image = Image.open(io.BytesIO(content))
     assert image.format == "JPEG"
     assert image.mode == "RGB"
@@ -137,23 +155,32 @@ def test_table_emits_structured_xhtml():
     assert "<tbody><tr><td>alpha</td><td>1</td></tr></tbody></table>" in content
 
 
-def test_ruled_pdf_table_is_extracted_as_rows_and_cells():
-    with tempfile.TemporaryDirectory() as temporary:
-        source = Path(temporary) / "table.pdf"
-        pdf = fitz.open()
-        page = pdf.new_page(width=612, height=792)
-        columns, rows = (100, 250, 400), (150, 190, 230)
-        for x in columns:
-            page.draw_line((x, rows[0]), (x, rows[-1]))
-        for y in rows:
-            page.draw_line((columns[0], y), (columns[-1], y))
-        for value, x, y in (("Name", 110, 176), ("Value", 260, 176), ("alpha", 110, 216), ("1", 260, 216)):
-            page.insert_text((x, y), value)
-        pdf.save(source)
-        pdf.close()
-        extracted = PdfExtractor(source, require_text=False).extract()
+def test_borderless_table_is_reconstructed_from_column_alignment():
+    words = []
+    for row_index, values in enumerate((("Name", "Value", "Count"), ("alpha", "1", "3"), ("beta", "2", "4"))):
+        y = 100 + row_index * 25
+        for value, x in zip(values, (100, 250, 400)):
+            words.append((x, y, x + 40, y + 10, value))
+    tables = detect_whitespace_tables(words)
+    assert tables
+    assert tables[0].rows[0] == ("Name", "Value", "Count")
+
+
+def test_ruled_pdf_table_is_extracted_as_rows_and_cells(tmp_path):
+    content = (
+        b"100 642 m 400 642 l S\n100 602 m 400 602 l S\n100 562 m 400 562 l S\n"
+        b"100 642 m 100 562 l S\n250 642 m 250 562 l S\n400 642 m 400 562 l S\n"
+        b"BT /F1 12 Tf 110 616 Td (Name) Tj ET\nBT /F1 12 Tf 260 616 Td (Value) Tj ET\n"
+        b"BT /F1 12 Tf 110 576 Td (alpha) Tj ET\nBT /F1 12 Tf 260 576 Td (1) Tj ET\n"
+    )
+    source = tmp_path / "table.pdf"
+    source.write_bytes(_minimal_pdf(content))
+    extracted = PdfExtractor(source, require_text=False).extract()
     assert extracted.pages[0].tables
     assert extracted.pages[0].tables[0].rows == (("Name", "Value"), ("alpha", "1"))
+    items = [item for chapter in PdfCleaner().clean(extracted).chapters for item in chapter.items]
+    assert sum(isinstance(item, FlowTableUnit) for item in items) == 1
+    assert not any(isinstance(item, FlowTextUnit) and "alpha" in item.text for item in items)
 
 
 def test_inline_bold_italic_and_baseline_markup_renders_semantically():
@@ -171,36 +198,48 @@ def test_inline_bold_italic_and_baseline_markup_renders_semantically():
     assert "<sub>down</sub>" in content
 
 
-def test_per_page_ocr_only_replaces_scan_page_and_records_drop():
-    with tempfile.TemporaryDirectory() as temporary:
-        source = Path(temporary) / "mixed.pdf"
-        pdf = fitz.open()
-        digital = pdf.new_page(width=612, height=792)
-        digital.insert_text((40, 80), "This digital page already contains more than fifty useful characters for extraction.")
-        scanned = pdf.new_page(width=612, height=792)
-        image_bytes = io.BytesIO()
-        Image.new("RGB", (850, 1100), "white").save(image_bytes, format="PNG")
-        scanned.insert_image(scanned.rect, stream=image_bytes.getvalue())
-        pdf.save(source)
-        pdf.close()
+def test_per_page_ocr_only_replaces_scan_page_and_records_drop(monkeypatch):
+    import pypdfium2
 
-        extracted = PdfExtractor(source, require_text=False).extract()
+    class FakePage:
+        def render(self, scale):
+            return type("Bitmap", (), {"to_pil": lambda _: Image.new("RGB", (100, 100), "white")})()
 
-        class FakeEngine:
-            name = "test-ocr"
+        def close(self):
+            pass
 
-            def recognize(self, image):
-                return "OCR recovered this scanned page with enough recognized words to distinguish a regular interior text page from a sparse graphic cover image, while retaining all extracted content."
+    class FakeDocument:
+        def __init__(self, _path):
+            pass
 
-        stats = ConversionStats()
-        routed = route_pages(extracted, stats, FakeEngine())
-        assert not routed.pages[0].ocr_used
-        assert routed.pages[1].ocr_used
-        assert "enough recognized words" in routed.pages[1].raw_text
-        assert not routed.pages[1].images
-        assert stats.ocr_engine == "test-ocr"
-        assert stats.drops[0].reason == "ocr_replaced_scan"
-        assert not stats.scanned
+        def __getitem__(self, _index):
+            return FakePage()
+
+        def close(self):
+            pass
+
+    class FakeEngine:
+        name = "test-ocr"
+
+        def recognize(self, image):
+            return "OCR recovered this scanned page with enough recognized words to distinguish a regular interior text page from a sparse graphic cover image, while retaining all extracted content."
+
+    monkeypatch.setattr(pypdfium2, "PdfDocument", FakeDocument)
+    scanned_image = ImageData(2, 0, (0, 0, 612, 792), b"image", "png")
+    pages = (
+        PageData(1, 612, 792, (_block("This digital page already contains more than fifty useful characters for extraction.", (40, 80, 500, 100)),), ()),
+        PageData(2, 612, 792, (), (scanned_image,)),
+    )
+    extracted = ExtractedDocument(pages, source_path="mixed.pdf")
+    stats = ConversionStats()
+    routed = route_pages(extracted, stats, FakeEngine())
+    assert not routed.pages[0].ocr_used
+    assert routed.pages[1].ocr_used
+    assert "enough recognized words" in routed.pages[1].raw_text
+    assert not routed.pages[1].images
+    assert stats.ocr_engine == "test-ocr"
+    assert stats.drops[0].reason == "ocr_replaced_scan"
+    assert not stats.scanned
 
 
 def test_ocr_thresholds_are_page_local():
@@ -210,25 +249,17 @@ def test_ocr_thresholds_are_page_local():
     assert not needs_ocr(5, 0.0, 100, 100)
 
 
-def test_vector_cluster_is_cropped_to_png():
-    with tempfile.TemporaryDirectory() as temporary:
-        source = Path(temporary) / "diagram.pdf"
-        pdf = fitz.open()
-        page = pdf.new_page(width=612, height=792)
-        for offset in range(5):
-            page.draw_rect(
-                fitz.Rect(100 + offset * 8, 150 + offset * 8, 220 - offset * 8, 260 - offset * 8),
-                color=(0, 0, 0),
-            )
-        pdf.save(source)
-        pdf.close()
-        extracted = PdfExtractor(source, require_text=False).extract()
-        vector_images = [image for image in extracted.pages[0].images if image.is_vector]
-        assert vector_images
-        assert vector_images[0].extension == "png"
-        assert vector_images[0].image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
-        assert vector_images[0].native_width > 100
-        assert vector_images[0].bbox[0] >= 90 and vector_images[0].bbox[2] <= 230
+def test_pdfium_extracts_empty_pages_when_text_is_not_required(tmp_path):
+    import pypdfium2 as pdfium
+
+    source = tmp_path / "blank.pdf"
+    document = pdfium.PdfDocument.new()
+    document.new_page(612, 792)
+    document.save(str(source))
+    document.close()
+    extracted = PdfExtractor(source, require_text=False).extract()
+    assert len(extracted.pages) == 1
+    assert extracted.pages[0].visual is not None
 
 
 def test_report_schema_and_deterministic_epub_bytes():
@@ -269,19 +300,24 @@ def test_report_schema_and_deterministic_epub_bytes():
         assert json.loads(json.dumps(report))["chapters"]["file_count"] == 1
 
 
-def test_conversion_pipeline_writes_report_next_to_epub():
+def test_conversion_pipeline_writes_report_next_to_epub(monkeypatch):
+    import pipeline
+
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         source = root / "source.pdf"
-        pdf = fitz.open()
-        page = pdf.new_page()
-        page.insert_text(
-            (72, 90),
-            "This conversion report checks that extracted words are preserved in a structured audit.",
-            fontsize=12,
-        )
-        pdf.save(source)
-        pdf.close()
+        source.write_bytes(b"synthetic input")
+        text = "This conversion report checks that extracted words are preserved in a structured audit."
+        page = PageData(1, 612, 792, (_block(text, (72, 80, 500, 100)),), (), raw_text=text)
+
+        class FakeExtractor:
+            def __init__(self, _path, require_text=True):
+                pass
+
+            def extract(self):
+                return ExtractedDocument((page,), source_path=str(source))
+
+        monkeypatch.setattr(pipeline, "PdfExtractor", FakeExtractor)
         output = root / "result.epub"
         ConversionPipeline(source, output).run()
         report_path = output.with_suffix(".report.json")

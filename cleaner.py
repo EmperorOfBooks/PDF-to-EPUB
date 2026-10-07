@@ -59,6 +59,7 @@ class FlowTableUnit:
     rows: tuple[tuple[str, ...], ...]
     bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     x: float = 0.0
+    has_header_row: bool = True
 
 
 @dataclass(frozen=True)
@@ -100,10 +101,16 @@ class CleanedDocument:
 
 
 class PdfCleaner:
-    def __init__(self, layout: LayoutAnalyzer | None = None, stats: ConversionStats | None = None) -> None:
+    def __init__(
+        self,
+        layout: LayoutAnalyzer | None = None,
+        stats: ConversionStats | None = None,
+        ocr_heuristics: bool = False,
+    ) -> None:
         self.layout = layout or LayoutAnalyzer()
         self.hyphenator = pyphen.Pyphen(lang="en_US")
         self.stats = stats
+        self.ocr_heuristics = ocr_heuristics
         self._note_counter = 0
 
     def _drop(self, page: PageData, bbox, reason: str, text: str = "", whole_page: bool = False) -> None:
@@ -114,7 +121,7 @@ class PdfCleaner:
 
     def clean(self, document: ExtractedDocument) -> CleanedDocument:
         body_font_size = self.layout.analyze(document.pages).body_font_size
-        repeated_margin_texts = self._detect_repeated_margin_texts(document)
+        repeated_margin_texts = self._detect_repeated_margin_texts(document, body_font_size)
         detection = detect_cover(document.pages)
         title_page: TitlePage | None = None
         if self.stats is not None:
@@ -209,8 +216,12 @@ class PdfCleaner:
     def _infer_body_font_size(self, document: ExtractedDocument) -> float:
         return self.layout.analyze(document.pages).body_font_size
 
-    def _detect_repeated_margin_texts(self, document: ExtractedDocument) -> set[str]:
-        return self.layout.repeated_margin_texts(document.pages)
+    def _detect_repeated_margin_texts(
+        self,
+        document: ExtractedDocument,
+        body_font_size: float | None = None,
+    ) -> set[str]:
+        return self.layout.repeated_margin_texts(document.pages, body_font_size)
 
     def _is_toc_page(self, page: PageData, repeated_margin_texts: set[str]) -> bool:
         candidate_texts: list[str] = []
@@ -243,6 +254,14 @@ class PdfCleaner:
 
         for block in page.text_blocks:
             if id(block) in note_block_ids:
+                continue
+            center_x = (block.bbox[0] + block.bbox[2]) / 2
+            center_y = (block.bbox[1] + block.bbox[3]) / 2
+            if any(
+                table.bbox[0] <= center_x <= table.bbox[2]
+                and table.bbox[1] <= center_y <= table.bbox[3]
+                for table in page.tables
+            ):
                 continue
             normalized_block_text = self._normalize_text(block.text)
             if not normalized_block_text:
@@ -770,8 +789,17 @@ class PdfCleaner:
             return True
         if len(compact) <= 4 and re.fullmatch(r"[0-9&GS]+", compact, flags=re.IGNORECASE):
             return True
+        if self.ocr_heuristics and self._is_ocr_garble(compact):
+            return True
         if re.search(r"[A-Za-z]", compact):
             return False
         if len(compact) <= 6:
             return True
         return bool(re.fullmatch(r"[\W\d_]+", compact))
+
+    @staticmethod
+    def _is_ocr_garble(compact: str) -> bool:
+        return bool(
+            re.fullmatch(r"(.)\1{2,}", compact)
+            or (len(compact) <= 3 and re.fullmatch(r"[^\w]+", compact))
+        )

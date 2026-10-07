@@ -16,6 +16,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", required=True, help="Path to a .pdf, .docx, .odt, .rtf, or .doc source")
     parser.add_argument("--output", required=True, help="Path to the output EPUB")
     parser.add_argument("--report", help="Path for the conversion audit JSON (default: alongside the EPUB)")
+    colophon_group = parser.add_mutually_exclusive_group()
+    colophon_group.add_argument(
+        "--include-colophon",
+        dest="include_colophon",
+        action="store_true",
+        default=False,
+        help="Append a generated colophon page with conversion metadata (default: omitted)",
+    )
+    colophon_group.add_argument(
+        "--no-colophon",
+        dest="include_colophon",
+        action="store_false",
+        help="Do not append a colophon page (default behavior)",
+    )
+    parser.add_argument(
+        "--ocr-heuristics",
+        action="store_true",
+        default=False,
+        help="Apply extra noise-filtering heuristics tuned for OCR-sourced text",
+    )
     return parser.parse_args()
 
 
@@ -35,14 +55,20 @@ def main() -> int:
         return 1
     output_path = resolve_output_path(input_path, Path(args.output).expanduser().resolve())
     try:
-        report_path = Path(args.report).expanduser().resolve() if args.report else output_path.with_suffix(".report.json")
         result = ConversionPipeline(
             input_path=input_path,
             output_path=output_path,
             title=input_path.stem,
-            report_path=report_path,
+            include_colophon=args.include_colophon,
+            ocr_heuristics=args.ocr_heuristics,
+            report_path=args.report,
         ).run()
         print(str(result))
+        report_path = (
+            Path(args.report).expanduser().resolve()
+            if args.report
+            else output_path.with_suffix(".report.json")
+        )
         report = json.loads(report_path.read_text(encoding="utf-8"))
         if recall_gate_failed(report):
             print(

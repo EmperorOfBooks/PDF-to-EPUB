@@ -5,9 +5,6 @@ import logging
 from pathlib import Path
 import time
 
-from PIL import Image
-import pymupdf as fitz
-
 from builder import EpubBuilder
 from cleaner import CleanedDocument, PdfCleaner
 from cover import COVER_IMAGE, render_cover_jpeg
@@ -37,8 +34,11 @@ def route_pages(
 ) -> ExtractedDocument:
     """OCR only deficient pages; preserve the digital extraction on all other pages."""
     engine = ocr_engine if ocr_engine is not None else OcrEngine()
-    engine_name = getattr(engine, "name", None) or (None if isinstance(engine, OcrEngine) else engine.__class__.__name__)
+    engine_name = getattr(engine, "name", None) or (
+        None if isinstance(engine, OcrEngine) else engine.__class__.__name__
+    )
     updated: list[PageData] = []
+    pdf = None
     for page in document.pages:
         raw_text = page.raw_text or "\n".join(block.text for block in page.text_blocks)
         char_count = len("".join(raw_text.split()))
@@ -50,10 +50,15 @@ def route_pages(
             updated.append(replace(page, raw_text=raw_text))
             continue
         try:
-            with fitz.open(document.source_path) as pdf:
-                pdf_page = pdf[page.page_number - 1]
-                pixmap = pdf_page.get_pixmap(matrix=fitz.Matrix(300 / 72, 300 / 72), alpha=False)
-                image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+            import pypdfium2 as pdfium
+
+            if pdf is None:
+                pdf = pdfium.PdfDocument(document.source_path)
+            pdf_page = pdf[page.page_number - 1]
+            try:
+                image = pdf_page.render(scale=300 / 72).to_pil().convert("RGB")
+            finally:
+                pdf_page.close()
             text = engine.recognize(image)
             blocks = _ocr_text_blocks(text, page)
             kept_images = []
@@ -75,9 +80,9 @@ def route_pages(
         except Exception as error:
             stats.warnings.append(f"OCR failed on page {page.page_number}: {error}")
             updated.append(replace(page, raw_text=raw_text))
-    stats.scanned = bool(document.pages) and all(
-        not page.text_blocks and not page.tables for page in document.pages
-    )
+    if pdf is not None:
+        pdf.close()
+    stats.scanned = bool(document.pages) and all(not page.text_blocks and not page.tables for page in document.pages)
     if not any(page.text_blocks or page.tables for page in updated):
         raise ScannedPdfError("The PDF has no usable text. OCR is unavailable or did not recover text.")
     return replace(document, pages=tuple(updated))
@@ -87,13 +92,13 @@ def _ocr_text_blocks(text: str, page: PageData) -> tuple[TextBlockData, ...]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return ()
-    line_height = page.height / max(len(lines), 1)
+    line_height = page.height / len(lines)
     blocks = []
     for index, value in enumerate(lines):
         y0 = min(page.height, index * line_height)
         y1 = min(page.height, y0 + line_height)
         bbox = (page.width * 0.04, y0, page.width * 0.96, y1)
-        line = LineData(value, bbox, ())
+        line = LineData(value, bbox, (), markup=value)
         blocks.append(
             TextBlockData(
                 page_number=page.page_number,
@@ -115,6 +120,8 @@ class ConversionPipeline:
         input_path: str | Path,
         output_path: str | Path,
         title: str | None = None,
+        include_colophon: bool = False,
+        ocr_heuristics: bool = False,
         report_path: str | Path | None = None,
         ocr_engine=None,
     ) -> None:
@@ -126,6 +133,8 @@ class ConversionPipeline:
             else self.output_path.with_suffix(".report.json")
         )
         self.title = title or self.input_path.stem
+        self.include_colophon = include_colophon
+        self.ocr_heuristics = ocr_heuristics
         self.ocr_engine = ocr_engine
 
     def run(self) -> Path:
@@ -135,18 +144,17 @@ class ConversionPipeline:
             logger.info("Extracting PDF pages from %s", self.input_path)
             extracted = PdfExtractor(self.input_path, require_text=False).extract()
             extracted = route_pages(extracted, stats, self.ocr_engine)
-            stats.input_tokens = [
-                token for page in extracted.pages for token in tokenize_words(page.raw_text)
-            ]
-            cleaned = PdfCleaner(stats=stats).clean(extracted)
+            stats.input_tokens = [token for page in extracted.pages for token in tokenize_words(page.raw_text)]
+            cleaned = PdfCleaner(ocr_heuristics=self.ocr_heuristics, stats=stats).clean(extracted)
             if cleaned.cover and cleaned.cover.kind == COVER_IMAGE and cleaned.cover.page_number:
                 jpeg, width, height = render_cover_jpeg(self.input_path, cleaned.cover.page_number)
                 cleaned = replace(cleaned, cover=replace(cleaned.cover, jpeg=jpeg, width=width, height=height))
         else:
             cleaned = OfficeExtractor(self.input_path).extract()
-            stats.source_format = self.input_path.suffix.lower().lstrip(".")
 
-        result = EpubBuilder(self.output_path, title=self.title).build(cleaned)
+        result = EpubBuilder(self.output_path, title=self.title).build(
+            cleaned, include_colophon=self.include_colophon
+        )
         report = build_report(
             stats=stats,
             document=cleaned,
@@ -154,7 +162,7 @@ class ConversionPipeline:
             runtime_seconds=time.perf_counter() - started,
             input_path=self.input_path,
             output_path=result.output_path,
-            counts=result.counts,
+            counts=result.counts or {},
         )
         write_report(self.report_path, report)
         if recall_gate_failed(report):
