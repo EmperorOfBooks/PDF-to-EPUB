@@ -1,4 +1,4 @@
-"""Type stubs for the native Rust extension pdf_to_epub_core."""
+"""Type stubs for the native Rust extension pdf_to_epub.pdf_to_epub_core."""
 
 from typing import Any
 

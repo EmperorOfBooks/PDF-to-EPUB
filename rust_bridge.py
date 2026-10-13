@@ -12,7 +12,7 @@ from collections import defaultdict
 from typing import Any
 
 try:
-    import pdf_to_epub_core as _core
+    import pdf_to_epub.pdf_to_epub_core as _core
 
     HAS_RUST_CORE = True
 except ImportError:
