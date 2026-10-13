@@ -15,7 +15,7 @@ The conversion pipeline operates across five deterministic stages:
 [ Ingestion & Archive Defense ] ── Safe zip parsing, defused XML, pypdfium2 extraction
         │
         ▼ (Stage 2)
-[ Spatial Layout & Rust Core ]  ── Multi-column sort, Rayon parallel geometry, table grid
+[ Spatial Layout & Rust Core ]  ── Multi-column sorting, GIL-released native geometry, table grid
         │
         ▼ (Stage 3)
 [ Content Cleaning & Semantics ] ── Heading detection, boilerplate filtering, footnote linking
