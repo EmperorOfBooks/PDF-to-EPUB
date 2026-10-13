@@ -11,7 +11,7 @@ This project reviewed the reference systems proposed in the task and adopted or 
 
 ### Rust Native Extension (pdf_to_epub_core via PyO3 & Maturin)
 - Adopted: yes
-- Why: Provides high-performance spatial geometry, multi-column reading order topological sorting, line clustering, and table cell coordinate grid reconstruction. Rayon parallelism accelerates multi-page batches while releasing the Python GIL (`py.allow_threads`). Safe OCF archive packaging runs uncompressed mimetype writes directly in Rust with path traversal validation.
+- Why: Provides high-performance spatial geometry, multi-column reading-order sorting, and table cell coordinate grid reconstruction. Rayon parallelism accelerates explicit multi-page batches while releasing the Python GIL (`py.allow_threads`). Safe OCF archive packaging runs uncompressed mimetype writes directly in Rust with path traversal validation.
 - Dependencies: PyO3 (0.23, Apache-2.0 OR MIT), Rayon (1.10, Apache-2.0 OR MIT), zip (2.2, MIT), regex (1.11, Apache-2.0 OR MIT).
 
 ### Security-Hardened Archive & Parser Architecture
