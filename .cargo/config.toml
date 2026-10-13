@@ -1,0 +1,2 @@
+[env]
+PYO3_USE_RAW_DYLIB = "1"
