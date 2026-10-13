@@ -10,7 +10,7 @@ import tracemalloc
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from inline import strip_markup
 
@@ -106,9 +106,19 @@ class ConversionStats:
     layout_branch_type: str = "single_column"
     error_codes: list[str] = field(default_factory=list)
 
-    def drop(self, page: int, bbox, reason: str, text: str = "", whole_page: bool = False) -> None:
+    def drop(
+        self,
+        page: int,
+        bbox: tuple[float, float, float, float] | Sequence[float] | None,
+        reason: str,
+        text: str = "",
+        whole_page: bool = False,
+    ) -> None:
+        typed_bbox: tuple[float, float, float, float] | None = None
+        if bbox is not None:
+            typed_bbox = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
         self.drops.append(
-            DroppedRegion(page=page, bbox=tuple(bbox) if bbox is not None else None, reason=reason, tokens=tokenize_words(text), whole_page=whole_page)
+            DroppedRegion(page=page, bbox=typed_bbox, reason=reason, tokens=tokenize_words(text), whole_page=whole_page)
         )
 
     def boilerplate_tokens(self) -> list[str]:

@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from inline import normalize_invisible_separators, strip_markup
 
@@ -58,7 +58,7 @@ class PageCoverDecision:
     nonwhite_ratio: float
     whitespace_ratio: float
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "page_number": self.page_number,
             "classification": self.kind,
@@ -93,7 +93,7 @@ class CoverInfo:
     width: int = 0
     height: int = 0
 
-    def to_report(self) -> dict:
+    def to_report(self) -> dict[str, Any]:
         return {
             "classification": self.kind,
             "confidence": self.confidence,

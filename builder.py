@@ -153,10 +153,14 @@ class PackageItem:
     title: str = ""
 
 
+def _default_counts() -> dict[str, int]:
+    return {}
+
+
 @dataclass(frozen=True)
 class BuildResult:
     output_path: Path
-    counts: dict[str, int] = field(default_factory=dict)
+    counts: dict[str, int] = field(default_factory=_default_counts)
     chapter_files: int = 0
 
 
