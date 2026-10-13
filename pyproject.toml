@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "pdf-to-epub"
+version = "0.1.0"
+description = "High-performance PDF and office documents to EPUB converter"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pypdfium2>=4.30.0",
+    "EbookLib>=0.18",
+    "pillow>=10.0.0",
+    "pyphen>=0.14.0",
+    "ftfy>=6.2.0",
+    "lxml>=5.2.0",
+    "pypandoc>=1.13",
+    "python-docx>=1.1.0",
+    "defusedxml>=0.7.1",
+    "maturin>=1.8,<2.0",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "pdf_to_epub_core"
+

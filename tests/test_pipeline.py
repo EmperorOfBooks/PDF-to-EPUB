@@ -320,6 +320,73 @@ class PdfPipelineTests(unittest.TestCase):
         self.assertFalse(cleaner_default._is_noise_text('zzzzzz'))
         self.assertTrue(cleaner_ocr._is_noise_text('zzzzzz'))
 
+    def test_zip_slip_payload_raises_security_exception(self):
+        from archive_security import ArchiveSecurityError, safe_extract_archive
+        import rust_bridge
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            evil_zip = os.path.join(temp_dir, 'slip.zip')
+            with zipfile.ZipFile(evil_zip, 'w') as z:
+                z.writestr('../../evil.sh', b'#!/bin/sh\necho evil')
+
+            extract_dest = os.path.join(temp_dir, 'extracted')
+            with zipfile.ZipFile(evil_zip) as z:
+                with self.assertRaises((ArchiveSecurityError, ValueError)):
+                    safe_extract_archive(z, extract_dest)
+
+            # Also verify Rust bridge rejects zip slip in container packaging
+            with self.assertRaises(ValueError):
+                rust_bridge.build_epub_archive(
+                    [('mimetype', b'application/epub+zip'), ('../../evil.sh', b'evil')],
+                    os.path.join(temp_dir, 'slip.epub'),
+                )
+
+    def test_decompression_bomb_payload_aborts(self):
+        from archive_security import ArchiveSecurityError, safe_extract_archive
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bomb_zip = os.path.join(temp_dir, 'bomb.zip')
+            with zipfile.ZipFile(bomb_zip, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+                z.writestr('large.txt', b'0' * (52 * 1024 * 1024))
+
+            extract_dest = os.path.join(temp_dir, 'extracted')
+            with zipfile.ZipFile(bomb_zip) as z:
+                with self.assertRaises((ArchiveSecurityError, ValueError)):
+                    safe_extract_archive(z, extract_dest)
+
+    def test_xml_entity_expansion_rejected(self):
+        import defusedxml.ElementTree as ET
+        from defusedxml.common import DTDForbidden, EntitiesForbidden
+
+        xxe_payload = '<!DOCTYPE test [<!ENTITY xxe "expansion">]><test>&xxe;</test>'
+        with self.assertRaises((DTDForbidden, EntitiesForbidden, ValueError, Exception)):
+            ET.fromstring(xxe_payload, forbid_dtd=True)
+
+    def test_command_injection_filename_handled_safely(self):
+        import subprocess
+        from unittest.mock import patch
+        import epubcheck_harvester
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_epub = os.path.join(temp_dir, 'book;calc.exe;&echo hacked.epub')
+            with open(fake_epub, 'wb') as f:
+                f.write(b'PK fake epub')
+            fake_jar = os.path.join(temp_dir, 'epubcheck.jar')
+            with open(fake_jar, 'wb') as f:
+                f.write(b'PK fake jar')
+
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value = subprocess.CompletedProcess([], returncode=0, stdout='', stderr='')
+                epubcheck_harvester.run_epubcheck(fake_jar, fake_epub)
+
+                self.assertTrue(mock_run.called)
+                args, kwargs = mock_run.call_args
+                self.assertFalse(kwargs.get('shell', True))
+                self.assertEqual(kwargs.get('timeout'), 120)
+                cmd = args[0]
+                self.assertNotIn(';calc.exe', cmd[-1])
+                self.assertNotIn('echo hacked', cmd[-1])
+
 
 if __name__ == '__main__':
     unittest.main()

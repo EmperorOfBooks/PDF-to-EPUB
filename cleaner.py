@@ -757,7 +757,7 @@ class PdfCleaner:
 
     @staticmethod
     def _strip_leading_marker(markup: str) -> str:
-        pattern = r"^[\ue001\ue003\ue005\ue007\s]*(?:\[\d{1,3}\]|\d{1,3}(?!\d)|[*†‡§¶]{1,3})[\ue002\ue004\ue006\ue008]*[\.\):]?\s*"
+        pattern = r"^[\ue001\ue003\ue005\ue007\t ]{0,10}(?:\[\d{1,3}\]|\d{1,3}(?!\d)|[*†‡§¶]{1,3})[\ue002\ue004\ue006\ue008]{0,10}[\.\):]?\s*"
         return re.sub(pattern, "", markup, count=1)
 
     def _column_index_for_page(self, page: PageData, x_value: float) -> int:

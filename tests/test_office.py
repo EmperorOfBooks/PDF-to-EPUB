@@ -76,3 +76,65 @@ def test_doc_extraction_without_libreoffice_raises_clear_error(tmp_path, monkeyp
 
     with pytest.raises(OfficeExtractionError, match="LibreOffice"):
         OfficeExtractor(source).extract()
+
+
+def test_zip_slip_docx_payload_raises_security_exception(tmp_path):
+    import zipfile
+
+    evil_docx = tmp_path / "malicious.docx"
+    with zipfile.ZipFile(evil_docx, "w") as z:
+        z.writestr("../../evil.sh", b"echo hacked")
+        z.writestr("word/document.xml", b"<xml></xml>")
+
+    with pytest.raises(OfficeExtractionError, match="[Ss]ecurity|[Zz]ip [Ss]lip|traversal"):
+        OfficeExtractor(evil_docx).extract()
+
+
+def test_decompression_bomb_docx_raises_security_exception(tmp_path):
+    import zipfile
+
+    bomb_docx = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(bomb_docx, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        # Create an entry exceeding 50 MB
+        z.writestr("word/document.xml", b"0" * (52 * 1024 * 1024))
+
+    with pytest.raises(OfficeExtractionError, match="[Ss]ecurity|[Dd]ecompression bomb|[Ee]xceeded"):
+        OfficeExtractor(bomb_docx).extract()
+
+
+def test_command_injection_in_filename_sanitized(tmp_path, monkeypatch):
+    import subprocess
+    from pathlib import Path
+    import office_extractor
+
+    monkeypatch.setattr(office_extractor.shutil, "which", lambda name: "soffice")
+
+    called_cmds = []
+
+    def mock_run(cmd, **kwargs):
+        called_cmds.append((cmd, kwargs))
+        # Create a mock converted output docx file matching the temp file stem
+        temp_input = Path(cmd[-1])
+        converted = temp_input.parent / f"{temp_input.stem}.docx"
+        make_docx(converted)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(office_extractor.subprocess, "run", mock_run)
+
+    injection_filename = "doc_name;calc.exe;&rm -rf;.doc"
+    source = tmp_path / injection_filename
+    source.write_bytes(b"fake doc content")
+
+    cleaned = OfficeExtractor(source).extract()
+    assert cleaned.chapters
+
+    # Assert subprocess was called with shell=False and sanitized uuid filename
+    assert len(called_cmds) == 1
+    cmd, kwargs = called_cmds[0]
+    assert kwargs.get("shell") is False
+    assert kwargs.get("timeout") == 120
+    # Command argument must not contain the injection string
+    input_arg = cmd[-1]
+    assert injection_filename not in input_arg
+    assert "calc.exe" not in input_arg
+

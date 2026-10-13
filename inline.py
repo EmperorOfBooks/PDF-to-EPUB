@@ -18,7 +18,7 @@ SUB_OPEN, SUB_CLOSE = "\ue007", "\ue008"
 NOTE_OPEN, NOTE_MID, NOTE_CLOSE = "\ue009", "\ue00a", "\ue00b"
 
 SENTINEL_RE = re.compile("[\ue001-\ue00b]")
-NOTE_RE = re.compile(f"{NOTE_OPEN}(\\d+){NOTE_MID}(.*?){NOTE_CLOSE}", re.DOTALL)
+NOTE_RE = re.compile(f"{NOTE_OPEN}(\\d+){NOTE_MID}([^{NOTE_CLOSE}]*){NOTE_CLOSE}")
 SUP_TOKEN_RE = re.compile(f"{SUP_OPEN}([^{SUP_CLOSE}]*){SUP_CLOSE}")
 NOTE_MARKER_RE = re.compile(r"^(?:\[\d{1,3}\]|\d{1,3}|[*†‡§¶]{1,3})$")
 LEADING_MARKER_RE = re.compile(r"^(\[\d{1,3}\]|\d{1,3}(?!\d)|[*†‡§¶]{1,3})[\.\):]?\s*(?=\S)")
@@ -34,8 +34,15 @@ WIDE_CHARS = set("mwMW@%")
 
 def strip_markup(text: str) -> str:
     """Return visible text with all inline sentinels removed (note refs keep their label)."""
-    text = NOTE_RE.sub(lambda match: match.group(2), text)
-    return SENTINEL_RE.sub("", text)
+    if not text:
+        return ""
+    lines = text.split("\n")
+    processed = []
+    for line in lines:
+        stripped = NOTE_RE.sub(lambda match: match.group(2), line)
+        stripped = SENTINEL_RE.sub("", stripped)
+        processed.append(stripped)
+    return "\n".join(processed)
 
 
 def normalize_invisible_separators(text: str) -> str:

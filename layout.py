@@ -16,6 +16,7 @@ from config import (
     XY_CUT_MIN_GUTTER,
 )
 from extractor import PageData, TextBlockData
+from rust_bridge import batch_sort_reading_order, detect_columns, sort_reading_order
 
 
 WATERMARK_FONT_SIZE_MULTIPLIER = 3.0
@@ -93,14 +94,21 @@ class LayoutAnalyzer:
 
     def ordered_blocks(self, page: PageData, blocks: Iterable[TextBlockData] | None = None) -> list[TextBlockData]:
         candidates = list(blocks if blocks is not None else page.text_blocks)
-        return sorted(
-            candidates,
-            key=lambda block: (
-                self.column_index(page, block.bbox[0]),
-                block.bbox[1],
-                block.bbox[0],
-            ),
-        )
+        if not candidates:
+            return []
+        try:
+            block_dicts = [{"bbox": b.bbox, "text": b.text, "_idx": i} for i, b in enumerate(candidates)]
+            sorted_dicts = sort_reading_order(block_dicts, page.width)
+            return [candidates[d["_idx"]] for d in sorted_dicts]
+        except Exception:
+            return sorted(
+                candidates,
+                key=lambda block: (
+                    self.column_index(page, block.bbox[0]),
+                    block.bbox[1],
+                    block.bbox[0],
+                ),
+            )
 
     def xy_cut_order(
         self,

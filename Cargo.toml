@@ -1,0 +1,15 @@
+[package]
+name = "pdf_to_epub_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pdf_to_epub_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+rayon = "1.10"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+regex = "1.11"
+

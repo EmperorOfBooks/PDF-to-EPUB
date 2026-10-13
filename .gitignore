@@ -18,3 +18,4 @@ source_code_dump.txt
 
 .validation/
 *.msi
+target/

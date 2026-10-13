@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
 import re
 import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+import defusedxml.ElementTree as ET
+
+from archive_security import validate_archive_entry_path
+from rust_bridge import build_epub_archive
 
 from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowNoteUnit, FlowTableUnit, FlowTextUnit
 from config import DEFAULT_LANGUAGE, DEFAULT_TITLE
@@ -310,19 +316,12 @@ class EpubBuilder:
 
     def _write_zip(self, files: dict[str, tuple[bytes, bool]], stamp: tuple[int, int, int, int, int, int]) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(self.output_path, "w") as archive:
-            info = zipfile.ZipInfo("mimetype", date_time=stamp)
-            info.compress_type = zipfile.ZIP_STORED
-            info.external_attr = 0o644 << 16
-            info.create_system = 3
-            archive.writestr(info, b"application/epub+zip")
-            for name in sorted(files):
-                data, compress = files[name]
-                entry = zipfile.ZipInfo(name, date_time=stamp)
-                entry.compress_type = zipfile.ZIP_DEFLATED if compress else zipfile.ZIP_STORED
-                entry.external_attr = 0o644 << 16
-                entry.create_system = 3
-                archive.writestr(entry, data)
+        manifest: list[tuple[str, bytes]] = [("mimetype", b"application/epub+zip")]
+        for name in sorted(files):
+            validate_archive_entry_path(name)
+            data, _ = files[name]
+            manifest.append((name, data))
+        build_epub_archive(manifest, str(self.output_path), date_time=stamp)
 
     @staticmethod
     def _zip_timestamp(created: str) -> tuple[int, int, int, int, int, int]:

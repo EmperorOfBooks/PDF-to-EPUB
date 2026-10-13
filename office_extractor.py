@@ -4,9 +4,12 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+import defusedxml
+import defusedxml.ElementTree as ET
 import ftfy
 import pypandoc
 from docx import Document
@@ -15,7 +18,10 @@ from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 from lxml import html as lxml_html
 
+from archive_security import ArchiveSecurityError, validate_zip_archive
 from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowTableUnit, FlowTextUnit
+
+defusedxml.defuse_stdlib()
 
 
 class OfficeExtractionError(RuntimeError):
@@ -48,13 +54,17 @@ class OfficeExtractor:
                 "to be installed and available on PATH."
             )
         with tempfile.TemporaryDirectory() as tmp_dir:
+            safe_filename = f"{uuid.uuid4().hex}{self.input_path.suffix}"
+            safe_input = Path(tmp_dir) / safe_filename
+            shutil.copy2(self.input_path, safe_input)
             result = subprocess.run(
-                [soffice, "--headless", "--convert-to", "docx", "--outdir", tmp_dir, str(self.input_path)],
+                [soffice, "--headless", "--convert-to", "docx", "--outdir", tmp_dir, str(safe_input)],
                 capture_output=True,
                 text=True,
+                shell=False,
                 timeout=120,
             )
-            converted = Path(tmp_dir) / f"{self.input_path.stem}.docx"
+            converted = Path(tmp_dir) / f"{safe_input.stem}.docx"
             if result.returncode != 0 or not converted.exists():
                 raise OfficeExtractionError(
                     f"LibreOffice failed to convert {self.input_path.name} to DOCX: {result.stderr.strip()}"
@@ -67,6 +77,11 @@ class OfficeExtractor:
                 self.input_path = original_path
 
     def _extract_docx(self) -> CleanedDocument:
+        try:
+            validate_zip_archive(self.input_path)
+        except Exception as error:
+            raise OfficeExtractionError(f"Security validation failed on DOCX {self.input_path.name}: {error}") from error
+
         try:
             document = Document(str(self.input_path))
         except Exception as error:

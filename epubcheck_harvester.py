@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import shutil
+import subprocess
+import tempfile
 import urllib.request
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
+
+from archive_security import safe_extract_archive
 
 RELEASE_API = "https://api.github.com/repos/w3c/epubcheck/releases/latest"
 ASSET_PATTERN = "epubcheck-*.zip"
@@ -26,7 +32,7 @@ def select_epubcheck_asset(assets: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def ensure_epubcheck(destination: str | Path) -> Path:
-    root = Path(destination)
+    root = Path(destination).resolve()
     root.mkdir(parents=True, exist_ok=True)
     existing = next(root.rglob("epubcheck.jar"), None)
     if existing is not None:
@@ -38,13 +44,20 @@ def ensure_epubcheck(destination: str | Path) -> Path:
     archive_path = root / asset["name"]
     urllib.request.urlretrieve(asset["browser_download_url"], archive_path)
     with zipfile.ZipFile(archive_path) as archive:
-        for member in archive.infolist():
-            target = (root / member.filename).resolve()
-            if root.resolve() not in target.parents and target != root.resolve():
-                raise ValueError(f"Unsafe path in EPUBCheck archive: {member.filename}")
-        archive.extractall(root)
+        safe_extract_archive(archive, root)
     archive_path.unlink()
     jar = next(root.rglob("epubcheck.jar"), None)
     if jar is None:
         raise FileNotFoundError("The selected EPUBCheck release contained no epubcheck.jar")
     return jar
+
+
+def run_epubcheck(jar_path: str | Path, epub_path: str | Path, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+    """Execute epubcheck via subprocess with shell=False, sanitized UUID temp path, and strict timeout."""
+    jar = Path(jar_path).resolve()
+    target_epub = Path(epub_path).resolve()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        safe_copy = Path(tmp_dir) / f"{uuid.uuid4().hex}.epub"
+        shutil.copy2(target_epub, safe_copy)
+        cmd = ["java", "-jar", str(jar), str(safe_copy)]
+        return subprocess.run(cmd, shell=False, capture_output=True, text=True, timeout=timeout)

@@ -7,6 +7,8 @@ from typing import Sequence
 
 import pypdfium2 as pdfium
 
+from rust_bridge import reconstruct_table_grid
+
 BBox = tuple[float, float, float, float]
 
 MIN_ROWS = 2

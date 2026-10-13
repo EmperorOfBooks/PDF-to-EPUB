@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import re
+import tracemalloc
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +41,35 @@ def count_words(text: str) -> int:
     return len(tokenize_words(text))
 
 
+def sanitize_telemetry_payload(data: Any) -> Any:
+    """Sanitize execution telemetry by stripping user directory paths, system usernames, and titles."""
+    try:
+        username = os.environ.get("USERNAME") or os.environ.get("USER") or getpass.getuser()
+    except Exception:
+        username = ""
+
+    def _clean_str(text: str) -> str:
+        if not text:
+            return text
+        if username and len(username) >= 3:
+            text = re.sub(re.escape(username), "<user>", text, flags=re.IGNORECASE)
+        # Windows user path pattern: C:\Users\<name>\...
+        text = re.sub(r"[a-zA-Z]:[\\/](?:Users|Documents and Settings|home)[\\/][^\\/]+[\\/]", "<sanitized_path>/", text)
+        # Unix user path pattern: /home/<name>/... or /Users/<name>/...
+        text = re.sub(r"/(?:Users|home)/[^/]+/", "<sanitized_path>/", text)
+        return text
+
+    if isinstance(data, str):
+        return _clean_str(data)
+    elif isinstance(data, dict):
+        return {k: sanitize_telemetry_payload(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_telemetry_payload(v) for v in data]
+    elif isinstance(data, tuple):
+        return tuple(sanitize_telemetry_payload(v) for v in data)
+    return data
+
+
 @dataclass
 class DroppedRegion:
     page: int
@@ -68,6 +100,11 @@ class ConversionStats:
     cover: dict[str, Any] = field(default_factory=dict)
     scanned: bool = False
     source_format: str = "pdf"
+    stage_durations: dict[str, float] = field(default_factory=dict)
+    memory_peak_mb: float = 0.0
+    page_count: int = 0
+    layout_branch_type: str = "single_column"
+    error_codes: list[str] = field(default_factory=list)
 
     def drop(self, page: int, bbox, reason: str, text: str = "", whole_page: bool = False) -> None:
         self.drops.append(
@@ -132,7 +169,30 @@ def build_report(
         recall_raw = round(min(1.0, len(produced) / input_words), 4) if input_words else 1.0
     gate_applies = recall is not None and not stats.scanned
     cover = dict(stats.cover) if stats.cover else {"classification": "NONE", "confidence": 0.0, "page_number": None}
-    return {
+
+    # Infer memory peak
+    memory_peak = stats.memory_peak_mb
+    if memory_peak <= 0.0 and tracemalloc.is_tracing():
+        _, peak = tracemalloc.get_traced_memory()
+        memory_peak = round(peak / (1024 * 1024), 2)
+
+    # Infer page count
+    page_count = stats.page_count
+    if page_count <= 0 and stats.drops:
+        page_count = max(item.page for item in stats.drops)
+
+    # Infer error codes
+    error_codes = list(stats.error_codes)
+    for w in stats.warnings:
+        code = re.sub(r"[^a-zA-Z0-9_]+", "_", w.split(":")[0]).strip("_").lower()
+        if code and code not in error_codes:
+            error_codes.append(code)
+
+    stage_durations = dict(stats.stage_durations)
+    if not stage_durations:
+        stage_durations = {"total": round(runtime_seconds, 3)}
+
+    report = {
         "schema_version": REPORT_SCHEMA_VERSION,
         "input": {"path": input_path.name, "format": stats.source_format},
         "output": {"path": output_path.name},
@@ -153,6 +213,11 @@ def build_report(
         "chapters": {"file_count": chapter_files},
         "diagnostics": {
             "runtime_seconds": round(runtime_seconds, 3),
+            "stage_durations": stage_durations,
+            "memory_peak_mb": memory_peak,
+            "page_count": page_count,
+            "layout_branch_type": stats.layout_branch_type,
+            "error_codes": error_codes,
             "scanned_input": stats.scanned,
             "ocr_engine": stats.ocr_engine,
             "ocr_pages": stats.ocr_pages,
@@ -160,6 +225,7 @@ def build_report(
             "warnings": stats.warnings,
         },
     }
+    return sanitize_telemetry_payload(report)
 
 
 def recall_gate_failed(report: dict[str, Any]) -> bool:
@@ -167,8 +233,9 @@ def recall_gate_failed(report: dict[str, Any]) -> bool:
 
 
 def write_report(path: Path, report: dict[str, Any]) -> Path:
+    sanitized = sanitize_telemetry_payload(report)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(sanitized, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
 
 
