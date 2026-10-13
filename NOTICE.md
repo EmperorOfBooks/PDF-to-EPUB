@@ -7,13 +7,18 @@ This software is licensed under the EmperorOfBooks Source-Available and Provenan
 - AI, dataset, and model-training provenance: Any model trained or fine-tuned on text transformed by this software must publicly acknowledge the engine, preserve authorial and source links, and document the transformation pipeline.
 
 For full license terms, see LICENSE.md.
-Official Repository: [https://github.com/EmperorOfBooks/PDF-to-EPUB](https://github.com/EmperorOfBooks/PDF-to-EPUB)
+Official Repository: https://github.com/EmperorOfBooks/PDF-to-EPUB
 
 Licenses of third-party dependencies
 ------------------------------------
 
+Python dependencies:
+
   colorama, 0.4.6
     BSD-3-Clause
+
+  defusedxml, 0.7.1
+    PSF-2.0 (Python Software Foundation License)
 
   EbookLib, 0.20
     AGPL-3.0-or-later (GNU Affero General Public License v3 or later)
@@ -24,8 +29,11 @@ Licenses of third-party dependencies
   ftfy, 6.3.1
     Apache-2.0
 
-  lxml, 6.0.2
+  lxml, 6.1.3
     BSD-3-Clause
+
+  maturin, 1.15.0
+    Apache-2.0 OR MIT
 
   packaging, 25.0
     Apache-2.0 OR BSD-2-Clause
@@ -60,10 +68,24 @@ Licenses of third-party dependencies
   tomli, 2.3.0
     MIT
 
-  typing_extensions, 4.15.0
+  typing_extensions, 4.16.0
     PSF-2.0
 
   wcwidth, 0.9.2
+    MIT
+
+Rust native dependencies (compiled into pdf_to_epub_core):
+
+  pyo3, 0.23.5
+    Apache-2.0 OR MIT
+
+  rayon, 1.12.0
+    Apache-2.0 OR MIT
+
+  regex, 1.13.1
+    Apache-2.0 OR MIT
+
+  zip, 2.4.2
     MIT
 
 Copies of the licenses are provided in the 'licenses' directory.
