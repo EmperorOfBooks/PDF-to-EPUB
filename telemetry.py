@@ -204,7 +204,7 @@ def build_report(
             "recall_raw": recall_raw,
             "recall_threshold": RECALL_THRESHOLD,
             "recall_gate_applies": gate_applies,
-            "recall_passed": (recall >= RECALL_THRESHOLD) if gate_applies else None,
+            "recall_passed": (recall >= RECALL_THRESHOLD) if (recall is not None and gate_applies) else None,
         },
         "dropped_pages": [item.to_dict() for item in stats.drops if item.whole_page],
         "dropped_regions": [item.to_dict() for item in stats.drops if not item.whole_page],

@@ -194,6 +194,7 @@ def detect_cover(pages: Sequence["PageData"]) -> CoverDetection:
     if cover is None and title is None:
         return CoverDetection(CoverInfo(NONE, 0.0, None, tuple(decisions)), None, None)
     primary = cover or title
+    assert primary is not None
     info = CoverInfo(primary.kind, primary.confidence, primary.page_number, tuple(decisions))
     return CoverDetection(info, cover.page_number if cover else None, title.page_number if title else None)
 

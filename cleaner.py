@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 import re
+from typing import Any, Sequence
 
 import ftfy
 import pyphen
@@ -15,8 +16,8 @@ from config import (
     TERMINAL_PUNCTUATION,
     PARAGRAPH_X_TOLERANCE,
 )
-from cover import COVER_IMAGE, CoverInfo, TitlePage, detect_cover, parse_title_page
-from extractor import ExtractedDocument, PageData, TableData, TextBlockData
+from cover import CoverInfo, TitlePage, detect_cover, parse_title_page
+from extractor import ExtractedDocument, PageData, SpanData, TextBlockData
 from inline import LEADING_MARKER_RE, link_note_refs, normalize_marker, strip_markup
 from layout import LayoutAnalyzer
 from telemetry import ConversionStats
@@ -122,7 +123,14 @@ class PdfCleaner:
         self.ocr_heuristics = ocr_heuristics
         self._note_counter = 0
 
-    def _drop(self, page: PageData, bbox, reason: str, text: str = "", whole_page: bool = False) -> None:
+    def _drop(
+        self,
+        page: PageData,
+        bbox: tuple[float, float, float, float] | None,
+        reason: str,
+        text: str = "",
+        whole_page: bool = False,
+    ) -> None:
         if self.stats is not None:
             if whole_page and bbox is None:
                 bbox = (0.0, 0.0, page.width, page.height)
@@ -154,7 +162,7 @@ class PdfCleaner:
                 continue
             if page.page_number <= COPYRIGHT_SEARCH_PAGES and self._is_copyright_page(page):
                 if current_items:
-                    chapters.append(ChapterContent(title=current_title, items=tuple(current_items + current_notes)))
+                    chapters.append(ChapterContent(title=current_title, items=tuple([*current_items, *current_notes])))
                 chapters.append(self._copyright_chapter(page, repeated_margin_texts))
                 current_title, current_items, current_notes, current_paragraph_count = "Dedication", [], [], 0
                 continue
@@ -170,7 +178,7 @@ class PdfCleaner:
                         and not self._is_title_for_open_chapter(item, current_items, current_paragraph_count)
                     ):
                         if current_items:
-                            chapters.append(ChapterContent(title=current_title, items=tuple(current_items + current_notes)))
+                            chapters.append(ChapterContent(title=current_title, items=tuple([*current_items, *current_notes])))
                         current_title = item.text
                         current_items = [item]
                         current_notes = []
@@ -181,35 +189,35 @@ class PdfCleaner:
                         elif current_paragraph_count == 0:
                             current_title = self._merge_titles(current_title, item.text)
                         if current_items and current_paragraph_count == 0 and isinstance(current_items[-1], FlowTextUnit) and current_items[-1].kind == "heading":
-                            previous = current_items[-1]
-                            merged = self._merge_titles(previous.text, item.text)
+                            prev_heading = current_items[-1]
+                            merged = self._merge_titles(prev_heading.text, item.text)
                             current_items[-1] = FlowTextUnit(
                                 kind="heading",
                                 text=merged,
-                                y=previous.y,
-                                page_number=previous.page_number,
-                                font_size=max(previous.font_size, item.font_size),
-                                bold_ratio=max(previous.bold_ratio, item.bold_ratio),
-                                level=previous.level,
-                                is_chapter_heading=previous.is_chapter_heading,
+                                y=prev_heading.y,
+                                page_number=prev_heading.page_number,
+                                font_size=max(prev_heading.font_size, item.font_size),
+                                bold_ratio=max(prev_heading.bold_ratio, item.bold_ratio),
+                                level=prev_heading.level,
+                                is_chapter_heading=prev_heading.is_chapter_heading,
                             )
                             current_title = merged
                         else:
                             current_items.append(item)
                 else:
                     if self._can_merge_page_continuation(current_items, item):
-                        previous = current_items[-1]
-                        if not isinstance(previous, FlowTextUnit) or not isinstance(item, FlowTextUnit):
+                        prev_para = current_items[-1]
+                        if not isinstance(prev_para, FlowTextUnit) or not isinstance(item, FlowTextUnit):
                             raise AssertionError("Page continuation requires text flow units")
-                        separator = "" if strip_markup(previous.text).endswith("-") else " "
+                        separator = "" if strip_markup(prev_para.text).endswith("-") else " "
                         current_items[-1] = FlowTextUnit(
                             kind="paragraph",
-                            text=self._strip_trailing_hyphen(previous.text) + separator + item.text,
-                            y=previous.y,
-                            page_number=previous.page_number,
-                            font_size=max(previous.font_size, item.font_size),
-                            bold_ratio=max(previous.bold_ratio, item.bold_ratio),
-                            level=previous.level,
+                            text=self._strip_trailing_hyphen(prev_para.text) + separator + item.text,
+                            y=prev_para.y,
+                            page_number=prev_para.page_number,
+                            font_size=max(prev_para.font_size, item.font_size),
+                            bold_ratio=max(prev_para.bold_ratio, item.bold_ratio),
+                            level=prev_para.level,
                         )
                     else:
                         current_items.append(item)
@@ -217,7 +225,7 @@ class PdfCleaner:
                         current_paragraph_count += 1
 
         if current_items or current_notes:
-            chapters.append(ChapterContent(title=current_title, items=tuple(current_items + current_notes)))
+            chapters.append(ChapterContent(title=current_title, items=tuple([*current_items, *current_notes])))
         if not chapters:
             chapters.append(ChapterContent(title="Chapter 1", items=tuple()))
         return CleanedDocument(
@@ -609,10 +617,12 @@ class PdfCleaner:
         return items + note_units
 
     @staticmethod
-    def _group_verse(elements: list, page: PageData) -> list:
+    def _group_verse(
+        elements: Sequence[FlowLineUnit | FlowImageUnit | FlowTableUnit], page: PageData
+    ) -> list[FlowLineUnit | FlowImageUnit | FlowTableUnit]:
         """Collapse runs of centered, ragged short lines (poems, epigraphs, dedications) into verse units."""
 
-        def is_line(element) -> bool:
+        def is_line(element: Any) -> bool:
             return isinstance(element, FlowLineUnit) and element.kind == "line" and element.bbox[2] > element.bbox[0]
 
         def is_verse_run(run: list[FlowLineUnit]) -> bool:
@@ -630,7 +640,7 @@ class PdfCleaner:
                 and all(right - left <= page.width * VERSE_MAX_LINE_WIDTH for left, right in zip(lefts, rights))
             )
 
-        grouped: list = []
+        grouped: list[FlowLineUnit | FlowImageUnit | FlowTableUnit] = []
         index = 0
         while index < len(elements):
             if not is_line(elements[index]):
@@ -640,7 +650,7 @@ class PdfCleaner:
             end = index
             while end < len(elements) and is_line(elements[end]):
                 end += 1
-            run = elements[index:end]
+            run: list[FlowLineUnit] = [el for el in elements[index:end] if isinstance(el, FlowLineUnit)]
             if is_verse_run(run):
                 grouped.append(
                     FlowLineUnit(
@@ -666,8 +676,8 @@ class PdfCleaner:
 
     def _can_merge_page_continuation(
         self,
-        current_items: list[FlowTextUnit | FlowImageUnit],
-        item: FlowTextUnit | FlowImageUnit,
+        current_items: Sequence[FlowTextUnit | FlowImageUnit | FlowTableUnit],
+        item: FlowTextUnit | FlowImageUnit | FlowTableUnit,
     ) -> bool:
         if not isinstance(item, FlowTextUnit) or item.kind != "paragraph" or not item.text:
             return False
@@ -789,7 +799,10 @@ class PdfCleaner:
         return heading.is_chapter_heading
 
     def _is_title_for_open_chapter(
-        self, heading: FlowTextUnit, current_items: list, current_paragraph_count: int
+        self,
+        heading: FlowTextUnit,
+        current_items: Sequence[FlowTextUnit | FlowImageUnit | FlowTableUnit],
+        current_paragraph_count: int,
     ) -> bool:
         """A chapter-title line that directly follows a bare "Chapter N" label belongs to it."""
         if current_paragraph_count or not current_items or self._looks_like_chapter_heading(heading.text):
@@ -891,7 +904,7 @@ class PdfCleaner:
             return left
         return f"{left} {right}".strip()
 
-    def _line_bold_ratio(self, spans) -> float:
+    def _line_bold_ratio(self, spans: Sequence[SpanData]) -> float:
         spans_list = [span for span in spans if span.text.strip()]
         if not spans_list:
             return 0.0

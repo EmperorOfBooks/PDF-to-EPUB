@@ -2,20 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import html
-import os
 import re
 import uuid
-import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-import defusedxml.ElementTree as ET
-
 from archive_security import validate_archive_entry_path
 from rust_bridge import build_epub_archive
 
-from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowNoteUnit, FlowTableUnit, FlowTextUnit
+from cleaner import ChapterContent, CleanedDocument, FlowNoteUnit, FlowTableUnit, FlowTextUnit
 from config import DEFAULT_LANGUAGE, DEFAULT_TITLE
 from cover import TitlePage
 from inline import (
@@ -102,10 +98,7 @@ pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-"""
 
-
-EPUB_CSS += """
 em, i { font-style: italic; }
 strong, b { font-weight: bold; }
 sup, sub { line-height: 0; font-size: 0.75em; }
@@ -125,7 +118,7 @@ p.doc-imprint { font-size: 0.9em; color: #444; }
 """
 
 PUBLISHER_RE = re.compile(r"\b(press|publishers?|publishing|publications|books|editions?|llc|inc\.?)\b", re.IGNORECASE)
-COPYRIGHT_LINE_RE = re.compile(r"copyright|�|\b(?:1[5-9]|20)\d\d\b", re.IGNORECASE)
+COPYRIGHT_LINE_RE = re.compile(r"copyright|\u00a9|\b(?:1[5-9]|20)\d\d\b", re.IGNORECASE)
 BODY_START_RE = re.compile(r"\s*(prologue|chapter\s+\d+|part\s+\w+)", re.IGNORECASE)
 AUTHOR_PREFIX_RE = re.compile(r"^\s*(?:written\s+by|by)\s*[:\-\s]+", re.IGNORECASE)
 
@@ -163,7 +156,7 @@ class PackageItem:
 @dataclass(frozen=True)
 class BuildResult:
     output_path: Path
-    counts: dict = field(default_factory=dict)
+    counts: dict[str, int] = field(default_factory=dict)
     chapter_files: int = 0
 
 
@@ -264,8 +257,8 @@ class EpubBuilder:
             "EPUB/nav.xhtml": (nav.content, True),
             "EPUB/toc.ncx": (self._ncx(identifier, chapter_items).encode("utf-8"), True),
         }
-        for item in items:
-            files[f"EPUB/{item.file_name}"] = (item.content, item.media_type.startswith("image/") is False)
+        for pkg in items:
+            files[f"EPUB/{pkg.file_name}"] = (pkg.content, pkg.media_type.startswith("image/") is False)
         self._write_zip(files, zip_stamp)
         counts = dict(self._counts)
         return BuildResult(
@@ -349,7 +342,7 @@ class EpubBuilder:
         nav: PackageItem,
         spine: list[PackageItem],
     ) -> str:
-        manifest = []
+        manifest: list[str] = []
         for item in [nav, *items]:
             item_id = self._item_id(item)
             props = f' properties="{item.properties}"' if item.properties and item.item_id != "style" else ""
@@ -392,7 +385,7 @@ class EpubBuilder:
         toc = "\n".join(
             f'      <li><a href="{html.escape(item.file_name)}">{html.escape(item.title or "Untitled")}</a></li>' for item in chapters
         )
-        landmarks = []
+        landmarks: list[str] = []
         if has_title:
             landmarks.append('      <li><a epub:type="titlepage" href="text/titlepage.xhtml">Title Page</a></li>')
         start = self._body_start(chapters)
@@ -426,7 +419,7 @@ class EpubBuilder:
 
     def _render_inline(self, text: str, seen_refs: set[int] | None = None, current_file: str = "") -> str:
         escaped = html.escape(text, quote=False)
-        seen = seen_refs if seen_refs is not None else set()
+        seen: set[int] = seen_refs if seen_refs is not None else set()
 
         def note(match: re.Match[str]) -> str:
             note_id = int(match.group(1))

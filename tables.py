@@ -90,7 +90,13 @@ def detect_ruled_tables(page, words: Sequence[tuple] = ()) -> list[DetectedTable
         rows.append(tuple(cells))
     if len(rows) < MIN_ROWS or sum(bool(cell) for row in rows for cell in row) / (len(rows) * len(xs[:-1])) < MIN_FILLED_RATIO:
         return []
-    return [DetectedTable(tuple(float(v) for v in table_bbox), tuple(rows), "ruled")]
+    return [
+        DetectedTable(
+            (float(table_bbox[0]), float(table_bbox[1]), float(table_bbox[2]), float(table_bbox[3])),
+            tuple(rows),
+            "ruled",
+        )
+    ]
 
 
 def _row_cells(words: Sequence[tuple], gap: float) -> list[tuple[float, float, str, int]]:
@@ -188,4 +194,8 @@ def _build_whitespace_table(run) -> DetectedTable | None:
         max(cells[-1][1] for _, _, cells in run),
         max(bottom for _, bottom, _ in run),
     )
-    return DetectedTable(tuple(float(v) for v in bbox), tuple(rows), "whitespace")
+    return DetectedTable(
+        (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])),
+        tuple(rows),
+        "whitespace",
+    )

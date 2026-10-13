@@ -241,7 +241,7 @@ class PdfExtractor:
                 cached = font_cache.get(index)
                 if cached is not None:
                     return cached
-                result = ("", 0.0, 0, None)
+                result: tuple[str, float, int, float | None] = ("", 0.0, 0, None)
                 try:
                     text_obj = textpage.get_textobj(index)
                 except Exception:
@@ -478,7 +478,8 @@ class PdfExtractor:
             return None
         extension = str(block.get("ext", "png"))
         alpha = bool(block.get("alpha", 0))
-        bbox = tuple(float(value) for value in block.get("bbox", (0.0, 0.0, 0.0, 0.0)))
+        raw_bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        bbox = (float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3]))
         return ImageData(
             page_number=page_number,
             block_index=block_index,
