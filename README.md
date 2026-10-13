@@ -139,16 +139,14 @@ from pathlib import Path
 from pipeline import ConversionPipeline
 
 # Run conversion
-result = ConversionPipeline(
+output_path = ConversionPipeline(
     input_path=Path("manuscript.pdf"),
     output_path=Path("book.epub"),
     title="My Book Title",
     include_colophon=False,
 ).run()
 
-print(f"EPUB created at {result.output_path}")
-print(f"Total chapters: {result.chapter_files}")
-print(f"Extracted counts: {result.counts}")
+print(f"EPUB created at {output_path}")
 ```
 
 Direct access to Rust acceleration:
