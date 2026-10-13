@@ -64,7 +64,7 @@ The conversion pipeline operates across five deterministic stages:
 - **Decompression Bomb Defense**: Enforces strict caps on uncompressed data (250 MB total archive limit, 50 MB per individual entry, and maximum 100:1 compression ratio). Streams are read in bounded 64 KB chunks to protect against deceptive archive headers.
 - **Zip Slip Prevention**: Canonicalizes all archive entry paths, rejecting directory traversal attempts (`..`), absolute paths, and drive-letter prefixes before extraction or packaging.
 - **XML Parsing Hardening**: Enforces safe XML handling with `defusedxml.defuse_stdlib()`, preventing external entity expansion (XXE), billion laughs attacks, DTD retrieval, and external schema access.
-- **Subprocess Sanitization**: All external tools (Tesseract, LibreOffice, Java/EPUBCheck) execute with `shell=False`, argument lists, UUID4-generated filenames in isolated temporary directories, and strict timeouts.
+- **Subprocess Sanitization**: Direct invocations of Tesseract, LibreOffice, and Java/EPUBCheck use `shell=False`, argument lists, UUID4-generated filenames in isolated temporary directories, and strict timeouts. Pandoc conversion is delegated through `pypandoc` and is not covered by these guarantees.
 - **ReDoS Protection**: Audited regular expressions with bounded repetitions and line-by-line processing prevent catastrophic backtracking on hostile or malformed input text.
 - **Telemetry Sanitization**: Strips local usernames and directory paths from emitted `report.json` telemetry to ensure safe audit log distribution.
 
