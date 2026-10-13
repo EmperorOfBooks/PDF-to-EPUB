@@ -71,13 +71,13 @@ Rust native dependencies (compiled into pdf_to_epub_core):
   pyo3, 0.29.3
     Apache-2.0 OR MIT
 
-  rayon, 1.10
+  rayon, 1.12.0
     Apache-2.0 OR MIT
 
-  regex, 1.11
+  regex, 1.13.1
     Apache-2.0 OR MIT
 
-  zip, 2.2
+  zip, 2.4.2
     MIT
 
 
