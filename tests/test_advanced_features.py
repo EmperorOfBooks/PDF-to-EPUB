@@ -393,7 +393,7 @@ def test_accessible_feature_epub_passes_epubcheck_when_available():
         epub_path = Path(temporary) / "accessible.epub"
         EpubBuilder(epub_path, "Book Title").build(document)
         result = subprocess.run(
-            [shutil.which("java"), "-jar", str(jar), str(epub_path)],
+            [shutil.which("java") or "java", "-jar", str(jar), str(epub_path)],
             capture_output=True,
             text=True,
             check=False,
@@ -430,11 +430,11 @@ def test_metadata_ncx_landmarks_and_css(tmp_path):
         imprints=("Copyright 2026", "Acme Publishing"),
     )
     chapters = [
-        ChapterContent(title="Copyright", items=[FlowTextUnit(kind="paragraph", text="x", y=0.0, page_number=1, font_size=12.0, bold_ratio=0.0)]),
-        ChapterContent(title="Prologue", items=[FlowTextUnit(kind="paragraph", text="y", y=0.0, page_number=1, font_size=12.0, bold_ratio=0.0)]),
+        ChapterContent(title="Copyright", items=(FlowTextUnit(kind="paragraph", text="x", y=0.0, page_number=1, font_size=12.0, bold_ratio=0.0),)),
+        ChapterContent(title="Prologue", items=(FlowTextUnit(kind="paragraph", text="y", y=0.0, page_number=1, font_size=12.0, bold_ratio=0.0),)),
     ]
     out = tmp_path / "b.epub"
-    EpubBuilder(out, title="Book").build(CleanedDocument(chapters=chapters, title_page=page))
+    EpubBuilder(out, title="Book").build(CleanedDocument(chapters=tuple(chapters), title_page=page))
     with zipfile.ZipFile(out) as z:
         assert z.namelist()[0] == "mimetype"
         assert z.getinfo("mimetype").compress_type == zipfile.ZIP_STORED

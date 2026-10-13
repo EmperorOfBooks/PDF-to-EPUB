@@ -8,6 +8,7 @@ import tempfile
 import uuid
 from importlib.util import find_spec
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
@@ -37,15 +38,14 @@ def run_tesseract_subprocess(image: Image.Image, timeout: int = 60) -> str:
 
 class OcrEngine:
     def __init__(self) -> None:
-        self._engine = None
+        self._engine: tuple[str, Any] | None = None
         if find_spec("rapidocr_onnxruntime") is not None:
-            from rapidocr_onnxruntime import RapidOCR
-
-            self._engine = ("rapidocr", RapidOCR())
+            import importlib
+            rapidocr_cls = getattr(importlib.import_module("rapidocr_onnxruntime"), "RapidOCR")
+            self._engine = ("rapidocr", rapidocr_cls())
         elif find_spec("pytesseract") is not None:
-            import pytesseract
-
-            self._engine = ("tesseract", pytesseract)
+            import importlib
+            self._engine = ("tesseract", importlib.import_module("pytesseract"))
         elif shutil.which("tesseract") or shutil.which("tesseract.exe"):
             self._engine = ("tesseract_cli", None)
 

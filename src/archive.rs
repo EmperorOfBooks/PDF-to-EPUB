@@ -100,3 +100,26 @@ pub fn build_epub_archive(
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_archive_paths() {
+        assert!(validate_archive_entry_path("mimetype").is_ok());
+        assert!(validate_archive_entry_path("META-INF/container.xml").is_ok());
+        assert!(validate_archive_entry_path("EPUB/text/chapter_1.xhtml").is_ok());
+        assert!(validate_archive_entry_path("EPUB/images/figure.png").is_ok());
+    }
+
+    #[test]
+    fn test_invalid_archive_paths() {
+        assert!(validate_archive_entry_path("").is_err());
+        assert!(validate_archive_entry_path("/absolute/path").is_err());
+        assert!(validate_archive_entry_path("C:/windows/path").is_err());
+        assert!(validate_archive_entry_path("C:\\windows\\path").is_err());
+        assert!(validate_archive_entry_path("path/../traversal").is_err());
+        assert!(validate_archive_entry_path("path/\0null").is_err());
+    }
+}
+

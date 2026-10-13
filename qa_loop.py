@@ -49,7 +49,8 @@ def ensure_epubcheck():
 
 def ensure_playwright():
     try:
-        import playwright
+        import importlib
+        importlib.import_module("playwright")
         return
     except Exception:
         run_cmd([sys.executable, "-m", "pip", "install", "playwright"])

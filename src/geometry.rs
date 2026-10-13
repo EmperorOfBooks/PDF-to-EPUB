@@ -367,3 +367,68 @@ pub fn reconstruct_table_grid(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bounding_box_dimensions() {
+        let bbox = BoundingBox::new(10.0, 20.0, 110.0, 120.0);
+        assert_eq!(bbox.width(), 100.0);
+        assert_eq!(bbox.height(), 100.0);
+    }
+
+    #[test]
+    fn test_snap_coordinates() {
+        let coords = vec![10.0, 10.5, 11.0, 50.0, 50.2, 100.0];
+        let snapped = snap_coordinates(&coords, 2.0);
+        assert_eq!(snapped.len(), 3);
+        assert!((snapped[0] - 10.5).abs() < 0.1);
+        assert!((snapped[1] - 50.1).abs() < 0.1);
+        assert!((snapped[2] - 100.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_closest_boundary() {
+        let boundaries = vec![0.0, 50.0, 100.0];
+        assert_eq!(closest_boundary(&boundaries, 5.0), 0);
+        assert_eq!(closest_boundary(&boundaries, 48.0), 1);
+        assert_eq!(closest_boundary(&boundaries, 95.0), 2);
+    }
+
+    #[test]
+    fn test_detect_columns_single_column() {
+        let blocks = vec![
+            TextBlock { bbox: BoundingBox::new(50.0, 100.0, 500.0, 120.0), text: "Full width title".into(), original_index: 0 },
+            TextBlock { bbox: BoundingBox::new(50.0, 130.0, 500.0, 150.0), text: "Full width para".into(), original_index: 1 },
+        ];
+        let columns = detect_columns_internal(&blocks, 600.0);
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0], vec![0, 1]);
+    }
+
+    #[test]
+    fn test_detect_columns_two_columns() {
+        let blocks = vec![
+            TextBlock { bbox: BoundingBox::new(320.0, 100.0, 550.0, 120.0), text: "Col 2 top".into(), original_index: 0 },
+            TextBlock { bbox: BoundingBox::new(50.0, 100.0, 280.0, 120.0), text: "Col 1 top".into(), original_index: 1 },
+            TextBlock { bbox: BoundingBox::new(50.0, 130.0, 280.0, 150.0), text: "Col 1 bottom".into(), original_index: 2 },
+            TextBlock { bbox: BoundingBox::new(320.0, 130.0, 550.0, 150.0), text: "Col 2 bottom".into(), original_index: 3 },
+        ];
+        let columns = detect_columns_internal(&blocks, 600.0);
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0], vec![1, 2]); // Left column in reading order
+        assert_eq!(columns[1], vec![0, 3]); // Right column in reading order
+    }
+
+    #[test]
+    fn test_sort_reading_order_indices() {
+        let blocks = vec![
+            TextBlock { bbox: BoundingBox::new(320.0, 100.0, 550.0, 120.0), text: "Col 2 top".into(), original_index: 0 },
+            TextBlock { bbox: BoundingBox::new(50.0, 100.0, 280.0, 120.0), text: "Col 1 top".into(), original_index: 1 },
+        ];
+        let indices = sort_reading_order_indices(&blocks, 600.0);
+        assert_eq!(indices, vec![1, 0]);
+    }
+}
