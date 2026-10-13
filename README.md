@@ -1,77 +1,194 @@
-# PDF and Office to EPUB converter
+# PDF and Office to EPUB Converter
 
-This project converts PDF, DOCX, ODT, RTF, and DOC documents into reflowable EPUB3 files using a staged pipeline:
+A high-performance, security-hardened document conversion engine that transforms PDF, DOCX, ODT, RTF, and DOC documents into accessible, reflowable EPUB3 publications. Accelerated with a native Rust core (`pdf_to_epub_core`) using PyO3 and Rayon, and engineered for IngramSpark and W3C EPUBCheck compliance.
 
-1. Ingest: extract PDF text, images, tables, and page metrics with pypdfium2, or route office input through DOCX/Pandoc/LibreOffice.
-2. Structure analysis: detect covers and title pages, reconstruct reading order, identify deficient OCR pages, and filter recurring noise.
-3. Semantics + packaging: create accessible EPUB3 XHTML and a conversion audit report.
+---
 
-## Key modules
+## Architecture & Staged Pipeline
 
-- `extractor.py`: PDF text, image, table, and page-metric extraction using pypdfium2.
-- `cover.py`: cover/title-page classification and PDFium-backed cover rendering.
-- `ocr.py`: optional OCR engine adapters; install `rapidocr-onnxruntime` or `pytesseract` to enable OCR.
-- `telemetry.py`: word accounting, dropped-region tracking, and report.json generation.
-- `office_extractor.py`: DOCX semantic extraction and Pandoc-backed ODT/RTF/DOC ingestion.
-- `router.py`: extension-based unified ingestion into `CleanedDocument`.
-- `layout.py`: geometry statistics, XY-cut reading order, and margin-artifact detection.
-- `cleaner.py`: normalizes text, filters noise, removes repeated headers/footers, detects headings, and groups content into reading order.
-- `builder.py`: creates accessible EPUB content, including tables, linked notes, cover/title pages, and deterministic packaging.
-- `epub_builder.py`: compatibility import shim for the builder.
-- `pipeline.py`: orchestration layer for a single conversion pipeline.
-- `main.py`: CLI entrypoint.
+The conversion pipeline operates across five deterministic stages:
+
+```
+[ Input Document ]
+        │
+        ▼ (Stage 1)
+[ Ingestion & Archive Defense ] ── Safe zip parsing, defused XML, pypdfium2 extraction
+        │
+        ▼ (Stage 2)
+[ Spatial Layout & Rust Core ]  ── Multi-column sorting, GIL-released native geometry, table grid
+        │
+        ▼ (Stage 3)
+[ Content Cleaning & Semantics ] ── Heading detection, boilerplate filtering, footnote linking
+        │
+        ▼ (Stage 4)
+[ EPUB3 Generation & Styling ]  ── Semantic HTML5, CSS typography, ARIA landmarks, NCX/Nav
+        │
+        ▼ (Stage 5)
+[ Deterministic Packaging ]     ── Uncompressed mimetype, safe OCF archive, audit report
+        │
+        ▼
+[ Validated EPUB3 Output ]
+```
+
+1. **Ingestion & Archive Defense**: Extracts text spans, native bitmaps, vector illustrations, and layout geometry from PDF documents via `pypdfium2`, or routes office formats (`.docx`, `.odt`, `.rtf`, `.doc`) through semantic OOXML parsers, Pandoc, and LibreOffice. DOCX archives are validated for Zip Slip and decompression bombs before parsing; ODT and RTF inputs are delegated to Pandoc.
+2. **Spatial Layout & Rust Acceleration**: High-performance multi-column detection, topological reading order sorting, and table cell coordinate grid snapping executed in Rust via `pdf_to_epub_core`. Heavy geometry computations run across CPU threads via Rayon with the Python GIL released (`py.allow_threads`).
+3. **Content Cleaning & Semantics**: Normalizes text encodings with `ftfy`, resolves discretionary hyphenation with `pyphen`, filters repeating running headers/footers, pairs footnotes and note references, detects chapter structures, and preserves verse/poetry formatting.
+4. **Accessible EPUB3 Semantic Assembly**: Emits clean HTML5 with ARIA roles (`role="doc-chapter"`, `role="doc-toc"`, `role="doc-pagebreak"`), landmark navigation (`epub:type="landmarks"`), NCX backward compatibility (`toc.ncx`), and responsive, book-grade CSS typography.
+5. **Deterministic Packaging & Validation**: Writes uncompressed `mimetype` first-entry archives according to the IDPF Open Container Format (OCF), verified against W3C EPUBCheck standards. Generates comprehensive `report.json` telemetry detailing word recall, dropped regions, and layout branches.
+
+---
+
+## Key Modules
+
+| Module | Language | Description |
+| :--- | :--- | :--- |
+| `src/` (`pdf_to_epub_core`) | Rust | Native extension for spatial reading order, Rayon parallel layout analysis, table grid reconstruction, and safe OCF packaging. |
+| `pdf_to_epub/` | Python | Package namespace hosting CLI entrypoint (`cli.py`) and type stubs (`pdf_to_epub_core.pyi`). |
+| [`rust_bridge.py`](rust_bridge.py) | Python | Bridge module routing layout operations to Rust with type-annotated pure-Python fallbacks. |
+| [`archive_security.py`](archive_security.py) | Python | Zip Slip prevention, path canonicalization, and decompression bomb defense (size and ratio limits). |
+| [`extractor.py`](extractor.py) | Python | PDF extraction layer parsing text spans, fonts, bounding boxes, and images with `pypdfium2`. |
+| [`cleaner.py`](cleaner.py) | Python | Pipeline cleaner normalizing text, detecting chapter breaks, isolating verse, and pairing notes. |
+| [`builder.py`](builder.py) | Python | Accessible EPUB3 builder generating package manifests, navigation documents, stylesheets, and XHTML chapters. |
+| [`layout.py`](layout.py) | Python | Geometry heuristics, XY-cut spatial analysis, and margin artifact detection. |
+| [`office_extractor.py`](office_extractor.py) | Python | OOXML/DOCX semantic parser and Pandoc/LibreOffice office format ingestion with defused XML. |
+| [`cover.py`](cover.py) | Python | Graphic cover and typographical title page classification and PDFium rendering. |
+| [`ocr.py`](ocr.py) | Python | Optional OCR fallback adapter for scanned pages (RapidOCR or Tesseract) with isolated subprocess execution. |
+| [`telemetry.py`](telemetry.py) | Python | Conversion auditing, word recall gates, dropped content accounting, and sanitized execution metrics. |
+| [`pipeline.py`](pipeline.py) | Python | End-to-end pipeline orchestrator managing ingestion, cleaning, building, and reporting. |
+| [`main.py`](main.py) | Python | Command-line interface and entrypoint. |
+
+---
+
+## Security Hardening
+
+- **Decompression Bomb Defense**: Enforces strict caps on uncompressed data (250 MB total archive limit, 50 MB per individual entry, and maximum 100:1 compression ratio). Streams are read in bounded 64 KB chunks to protect against deceptive archive headers.
+- **Zip Slip Prevention**: Canonicalizes all archive entry paths, rejecting directory traversal attempts (`..`), absolute paths, and drive-letter prefixes before extraction or packaging.
+- **XML Parsing Hardening**: Enforces safe XML handling with `defusedxml.defuse_stdlib()`, preventing external entity expansion (XXE), billion laughs attacks, DTD retrieval, and external schema access.
+- **Subprocess Sanitization**: Direct invocations of Tesseract, LibreOffice, and Java/EPUBCheck use `shell=False`, argument lists, UUID4-generated filenames in isolated temporary directories, and strict timeouts. Pandoc conversion is delegated through `pypandoc` and is not covered by these guarantees.
+- **ReDoS Protection**: Audited regular expressions with bounded repetitions and line-by-line processing prevent catastrophic backtracking on hostile or malformed input text.
+- **Telemetry Sanitization**: Strips local usernames and directory paths from emitted `report.json` telemetry to ensure safe audit log distribution.
+
+---
+
+## Installation & Setup
+
+### Prerequisites
+- Python 3.10 or newer
+- Rust toolchain (Cargo and rustc, edition 2021) for compiling native extensions
+- *(Optional)* Java JRE 8+ for running EPUBCheck
+- *(Optional)* Tesseract OCR or LibreOffice for scanned PDFs or legacy `.doc` files
+
+### Install Dependencies
+```bash
+# Clone the repository
+git clone https://github.com/EmperorOfBooks/PDF-to-EPUB.git
+cd PDF-to-EPUB
+
+# Install Python requirements
+pip install -r requirements.txt
+
+# Compile and install the Rust native extension
+maturin develop
+```
+
+Or install the package directly:
+```bash
+pip install .
+```
+
+---
 
 ## Usage
 
-Single file:
+### Command-Line Interface
 
+Convert a document using the CLI script:
 ```bash
-python main.py --input "G:\Book Done.pdf" --output "G:\Book Done.epub"
-python main.py --input "G:\manuscript.docx" --output "G:\manuscript.epub"
-python main.py --input "G:\Book Done.pdf" --output "G:\Book Done.epub" --report "G:\Book Done.audit.json"
+# Using the installed script entrypoint
+pdf-to-epub --input "manuscript.pdf" --output "book.epub"
+
+# Or running directly via Python
+python main.py --input "manuscript.pdf" --output "book.epub"
 ```
 
-Batch-style use from Python:
+Office documents are converted directly:
+```bash
+pdf-to-epub --input "document.docx" --output "document.epub"
+pdf-to-epub --input "draft.odt" --output "draft.epub"
+```
+
+Generate a conversion audit report:
+```bash
+pdf-to-epub --input "book.pdf" --output "book.epub" --report "book.audit.json"
+```
+
+Append a generated colophon with conversion metadata:
+```bash
+pdf-to-epub --input "book.pdf" --output "book.epub" --include-colophon
+```
+
+Enable extra heuristics tuned for OCR-derived documents:
+```bash
+pdf-to-epub --input "scanned_doc.pdf" --output "scanned_doc.epub" --ocr-heuristics
+```
+
+### Python API
 
 ```python
-from pipeline import convert_pdf
+from pathlib import Path
+from pipeline import ConversionPipeline
 
-output = convert_pdf("G:\manuscript.docx", "G:\manuscript.epub")
-print(output)
+# Run conversion
+output_path = ConversionPipeline(
+    input_path=Path("manuscript.pdf"),
+    output_path=Path("book.epub"),
+    title="My Book Title",
+    include_colophon=False,
+).run()
+
+print(f"EPUB created at {output_path}")
 ```
 
-## Quality notes
+Direct access to Rust acceleration:
+```python
+from rust_bridge import is_rust_available, sort_reading_order, reconstruct_table_grid
 
-The current pipeline is designed for reflowable EPUB3 output and focuses on common document conversion problems:
+print(f"Rust native core loaded: {is_rust_available()}")
 
-- multi-column layout ordering
-- chapter and section heading detection
-- redundant header/footer removal
-- image deduplication and responsive sizing in XHTML
-- DOCX embedded-image extraction and Pandoc-backed office conversion
-- EPUB validation with `epubcheck`
+# Sort page blocks into reading order
+blocks = [
+    {"bbox": (320.0, 100.0, 550.0, 120.0), "text": "Right column header"},
+    {"bbox": (50.0, 100.0, 280.0, 120.0), "text": "Left column header"},
+]
+ordered = sort_reading_order(blocks, page_width=600.0)
+```
 
-## Before / after
+---
 
-Before:
-- page-height sorting could misorder left/right columns
-- image markup was bare and rigid
-- fallback handling for text blocks without line metadata was brittle
+## Verification & Testing
 
-After:
-- column-aware ordering keeps left-column reading sequence intact
-- semantic XHTML wraps chapters in `<section>` markup
-- figures use responsive `max-width`, `aspect-ratio`, and accessible captions
-- duplicate images are filtered before packaging
+Run the full automated test suite:
 
-## Remaining edge cases
+```bash
+# Run Python unit and integration tests
+pytest
 
-The converter is still limited in a few areas:
+# Run Rust unit tests for geometry and archive algorithms
+cargo test
 
-- scanned pages when no optional OCR engine is installed or OCR cannot recover text
-- complex tables with merged cells or rotated text
-- mathematical expressions and code blocks that need richer semantic markup
-- RTL scripts and mixed-language layout tuning
-- very large image-heavy books, where memory and image compression need more tuning
+# Run static type checking
+pyright
+```
 
-For those cases, the next recommended iteration is OCR + layout analysis (Tesseract, OCRmyPDF, or a more advanced zone-based parser) before final EPUB packaging.
+---
+
+## License & Provenance
+
+This project is licensed under the **EmperorOfBooks Source-Available and Provenance License (Version 1.0)**.
+
+- **Noncommercial Use**: Free for personal reading, study, academic research, and non-profit educational instruction.
+- **Commercial Use**: Prohibited without a separate, written Commercial License Agreement and Royalty Schedule executed directly with EmperorOfBooks.
+- **AI & Model Training Provenance**: Any Transformed Corpus and any machine learning model trained, aligned, or fine-tuned on data processed by this engine must publicly acknowledge the EmperorOfBooks PDF-to-EPUB engine and preserve authorial and source metadata.
+
+For full license terms, refer to [`LICENSE.md`](LICENSE.md).  
+For third-party dependency licenses and notices, refer to [`NOTICE.md`](NOTICE.md) and the [`licenses/`](licenses/) directory.

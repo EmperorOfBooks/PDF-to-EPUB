@@ -12,12 +12,17 @@ from collections import defaultdict
 from typing import Any
 
 try:
-    import pdf_to_epub.pdf_to_epub_core as _core
+    import pdf_to_epub.pdf_to_epub_core as _core  # pyright: ignore[reportMissingModuleSource]
 
     HAS_RUST_CORE = True
 except ImportError:
-    _core = None
-    HAS_RUST_CORE = False
+    try:
+        import pdf_to_epub_core as _core  # pyright: ignore[reportMissingImports]
+
+        HAS_RUST_CORE = True
+    except ImportError:
+        _core = None
+        HAS_RUST_CORE = False
 
 
 def is_rust_available() -> bool:
