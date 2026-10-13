@@ -20,7 +20,10 @@ from lxml import html as lxml_html
 from archive_security import ArchiveSecurityError, validate_zip_archive
 from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowTableUnit, FlowTextUnit
 
-getattr(defusedxml, "defuse_stdlib", lambda: None)()
+defuse_stdlib = getattr(defusedxml, "defuse_stdlib", None)
+if defuse_stdlib is None:
+    raise RuntimeError("defusedxml.defuse_stdlib is required")
+defuse_stdlib()
 
 
 class OfficeExtractionError(RuntimeError):
