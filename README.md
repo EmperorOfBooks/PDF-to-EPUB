@@ -30,7 +30,7 @@ The conversion pipeline operates across five deterministic stages:
 [ Validated EPUB3 Output ]
 ```
 
-1. **Ingestion & Archive Defense**: Extracts text spans, native bitmaps, vector illustrations, and layout geometry from PDF documents via `pypdfium2`, or routes office formats (`.docx`, `.odt`, `.rtf`, `.doc`) through semantic OOXML parsers, Pandoc, and LibreOffice. All archive extractions enforce strict Zip Slip and decompression bomb validation.
+1. **Ingestion & Archive Defense**: Extracts text spans, native bitmaps, vector illustrations, and layout geometry from PDF documents via `pypdfium2`, or routes office formats (`.docx`, `.odt`, `.rtf`, `.doc`) through semantic OOXML parsers, Pandoc, and LibreOffice. DOCX archives are validated for Zip Slip and decompression bombs before parsing; ODT and RTF inputs are delegated to Pandoc.
 2. **Spatial Layout & Rust Acceleration**: High-performance multi-column detection, topological reading order sorting, and table cell coordinate grid snapping executed in Rust via `pdf_to_epub_core`. Heavy geometry computations run across CPU threads via Rayon with the Python GIL released (`py.allow_threads`).
 3. **Content Cleaning & Semantics**: Normalizes text encodings with `ftfy`, resolves discretionary hyphenation with `pyphen`, filters repeating running headers/footers, pairs footnotes and note references, detects chapter structures, and preserves verse/poetry formatting.
 4. **Accessible EPUB3 Semantic Assembly**: Emits clean HTML5 with ARIA roles (`role="doc-chapter"`, `role="doc-toc"`, `role="doc-pagebreak"`), landmark navigation (`epub:type="landmarks"`), NCX backward compatibility (`toc.ncx`), and responsive, book-grade CSS typography.
