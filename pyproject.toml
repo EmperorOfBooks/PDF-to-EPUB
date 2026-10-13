@@ -21,6 +21,9 @@ dependencies = [
     "maturin>=1.8,<2.0",
 ]
 
+[project.scripts]
+pdf-to-epub = "main:main"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "pdf_to_epub_core"

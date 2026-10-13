@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import defusedxml
-import defusedxml.ElementTree as ET
 import ftfy
 import pypandoc
 from docx import Document
@@ -21,7 +20,7 @@ from lxml import html as lxml_html
 from archive_security import ArchiveSecurityError, validate_zip_archive
 from cleaner import ChapterContent, CleanedDocument, FlowImageUnit, FlowTableUnit, FlowTextUnit
 
-defusedxml.defuse_stdlib()
+getattr(defusedxml, "defuse_stdlib", lambda: None)()
 
 
 class OfficeExtractionError(RuntimeError):
@@ -104,7 +103,7 @@ class OfficeExtractor:
 
             paragraph = block
             text = self._fix_text(paragraph.text)
-            level = self._heading_level(paragraph.style.name if paragraph.style else "")
+            level = self._heading_level(paragraph.style.name if (paragraph.style and paragraph.style.name) else "")
             images = self._paragraph_images(paragraph, document, seen_relationships, image_index, position)
             image_index += len(images)
             if level:

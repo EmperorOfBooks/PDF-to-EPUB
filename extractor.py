@@ -423,6 +423,8 @@ class PdfExtractor:
         images: list[ImageData] = []
         block_index = 0
         for obj in page.get_objects(filter=[pdfium.raw.FPDF_PAGEOBJ_IMAGE]):
+            if not isinstance(obj, pdfium.PdfImage):
+                continue
             try:
                 bitmap = obj.get_bitmap(render=True)
                 pil_image = bitmap.to_pil()

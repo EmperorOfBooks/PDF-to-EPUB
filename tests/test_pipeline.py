@@ -242,7 +242,7 @@ class PdfPipelineTests(unittest.TestCase):
         cleaned = PdfCleaner().clean(ExtractedDocument(pages=(PageData(1, 396.0, 612.0, blocks, ()),)))
 
         self.assertEqual(cleaned.chapters[0].title, 'Copyright')
-        paragraphs = [item.text for item in cleaned.chapters[0].items if item.kind == 'paragraph']
+        paragraphs = [item.text for item in cleaned.chapters[0].items if isinstance(item, FlowTextUnit) and item.kind == 'paragraph']
         self.assertEqual(
             paragraphs,
             [
