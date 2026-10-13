@@ -9,6 +9,15 @@ This project reviewed the reference systems proposed in the task and adopted or 
 - Why: pypdfium2 wraps Google's permissively-licensed PDFium engine, avoiding the AGPL/commercial dual-licensing obligations the project previously carried with PyMuPDF, while still providing direct PDF text and image extraction suitable for a self-contained Windows/Python workflow.
 - License note: pypdfium2 is Apache-2.0 OR BSD-3-Clause (the bundled PDFium library is itself BSD-3-Clause/Apache-2.0 dual-licensed). ebooklib remains AGPL-3.0-or-later for the EPUB packaging step; that obligation is unchanged by this migration.
 
+### Rust Native Extension (pdf_to_epub_core via PyO3 & Maturin)
+- Adopted: yes
+- Why: Provides high-performance spatial geometry, multi-column reading order topological sorting, line clustering, and table cell coordinate grid reconstruction. Rayon parallelism accelerates multi-page batches while detaching execution from the Python interpreter (`py.detach`). Safe OCF archive packaging runs uncompressed mimetype writes directly in Rust with path traversal validation.
+- Dependencies: PyO3 (0.29.3, Apache-2.0 OR MIT), Rayon (1.10, Apache-2.0 OR MIT), zip (2.2, MIT), regex (1.11, Apache-2.0 OR MIT).
+
+### Security-Hardened Archive & Parser Architecture
+- Adopted: yes
+- Why: Comprehensive defense against Zip Slip directory traversal (`archive_security.py`), decompression bombs (250 MB total / 50 MB entry / 100:1 ratio caps with bounded 64 KB chunk reads), defused XML parsing (`defusedxml` blocking XXE and entity expansion), safe subprocess execution (`shell=False`, list arguments, UUID4 filenames in temp directories, timeouts), and ReDoS hardening on text assembly regexes.
+
 ### EPUB3 semantics and accessibility-oriented packaging
 - Adopted: yes, in principle
 - Why: EPUB3 with semantic XHTML, headings, landmarks, and accessibility metadata is the right long-term target for clean reflowable output.

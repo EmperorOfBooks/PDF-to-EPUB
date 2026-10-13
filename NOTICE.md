@@ -66,4 +66,19 @@ Licenses of third-party dependencies
   wcwidth, 0.9.2
     MIT
 
+Rust native dependencies (compiled into pdf_to_epub_core):
+
+  pyo3, 0.29.3
+    Apache-2.0 OR MIT
+
+  rayon, 1.10
+    Apache-2.0 OR MIT
+
+  regex, 1.11
+    Apache-2.0 OR MIT
+
+  zip, 2.2
+    MIT
+
+
 Copies of the licenses are provided in the 'licenses' directory.

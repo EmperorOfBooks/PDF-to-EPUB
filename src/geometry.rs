@@ -142,14 +142,14 @@ pub fn sort_reading_order(
     py: Python<'_>,
     blocks: Vec<Bound<'_, PyAny>>,
     page_width: Option<f32>,
-) -> PyResult<Vec<PyObject>> {
+) -> PyResult<Vec<Py<PyAny>>> {
     let mut extracted = Vec::with_capacity(blocks.len());
     for (i, obj) in blocks.into_iter().enumerate() {
         let block = extract_block(&obj, i)?;
         extracted.push((block, obj.unbind()));
     }
 
-    let indices = py.allow_threads(|| {
+    let indices = py.detach(|| {
         let blocks_only: Vec<TextBlock> = extracted.iter().map(|(b, _)| b.clone()).collect();
         let width = page_width.unwrap_or_else(|| {
             blocks_only.iter().map(|b| b.bbox.x1).fold(612.0_f32, f32::max)
@@ -170,14 +170,14 @@ pub fn detect_columns(
     py: Python<'_>,
     blocks: Vec<Bound<'_, PyAny>>,
     page_width: f32,
-) -> PyResult<Vec<Vec<PyObject>>> {
+) -> PyResult<Vec<Vec<Py<PyAny>>>> {
     let mut extracted = Vec::with_capacity(blocks.len());
     for (i, obj) in blocks.into_iter().enumerate() {
         let block = extract_block(&obj, i)?;
         extracted.push((block, obj.unbind()));
     }
 
-    let col_indices = py.allow_threads(|| {
+    let col_indices = py.detach(|| {
         let blocks_only: Vec<TextBlock> = extracted.iter().map(|(b, _)| b.clone()).collect();
         detect_columns_internal(&blocks_only, page_width)
     });
@@ -199,8 +199,8 @@ pub fn batch_sort_reading_order(
     py: Python<'_>,
     pages_blocks: Vec<Vec<Bound<'_, PyAny>>>,
     page_width: Option<f32>,
-) -> PyResult<Vec<Vec<PyObject>>> {
-    let mut extracted_pages: Vec<Vec<(TextBlock, PyObject)>> = Vec::with_capacity(pages_blocks.len());
+) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+    let mut extracted_pages: Vec<Vec<(TextBlock, Py<PyAny>)>> = Vec::with_capacity(pages_blocks.len());
     for page in pages_blocks {
         let mut page_blocks = Vec::with_capacity(page.len());
         for (i, obj) in page.into_iter().enumerate() {
@@ -210,7 +210,7 @@ pub fn batch_sort_reading_order(
         extracted_pages.push(page_blocks);
     }
 
-    let sorted_indices: Vec<Vec<usize>> = py.allow_threads(|| {
+    let sorted_indices: Vec<Vec<usize>> = py.detach(|| {
         extracted_pages
             .par_iter()
             .map(|page_blocks| {
@@ -279,7 +279,7 @@ fn closest_boundary(boundaries: &[f32], val: f32) -> usize {
         .unwrap_or(0)
 }
 
-fn compute_table_grid(cell_data: &[(BoundingBox, PyObject)], tol: f32) -> (Vec<Vec<usize>>, Vec<CellMeta>) {
+fn compute_table_grid(cell_data: &[(BoundingBox, Py<PyAny>)], tol: f32) -> (Vec<Vec<usize>>, Vec<CellMeta>) {
     let mut x_coords = Vec::new();
     let mut y_coords = Vec::new();
 
@@ -330,7 +330,7 @@ pub fn reconstruct_table_grid(
     py: Python<'_>,
     cells: Vec<Bound<'_, PyAny>>,
     tolerance: f32,
-) -> PyResult<Vec<Vec<PyObject>>> {
+) -> PyResult<Vec<Vec<Py<PyAny>>>> {
     if cells.is_empty() {
         return Ok(Vec::new());
     }
@@ -343,7 +343,7 @@ pub fn reconstruct_table_grid(
         cell_data.push((block.bbox, obj.unbind()));
     }
 
-    let (grid_rows, cell_metadata) = py.allow_threads(|| {
+    let (grid_rows, cell_metadata) = py.detach(|| {
         compute_table_grid(&cell_data, tol)
     });
 
@@ -354,7 +354,7 @@ pub fn reconstruct_table_grid(
             let py_obj = &cell_data[idx].1;
             let meta = &cell_metadata[idx];
             let bound_obj = py_obj.bind(py);
-            if let Ok(dict) = bound_obj.downcast::<PyDict>() {
+            if let Ok(dict) = bound_obj.cast::<PyDict>() {
                 dict.set_item("row", meta.row)?;
                 dict.set_item("col", meta.col)?;
                 dict.set_item("rowspan", meta.rowspan)?;

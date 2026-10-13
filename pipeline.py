@@ -56,7 +56,7 @@ def route_pages(
                 pdf = pdfium.PdfDocument(document.source_path)
             pdf_page = pdf[page.page_number - 1]
             try:
-                image = pdf_page.render(scale=300.0 / 72.0).to_pil().convert("RGB")
+                image = pdf_page.render(scale=int(round(300.0 / 72.0))).to_pil().convert("RGB")
             finally:
                 pdf_page.close()
             text = engine.recognize(image)

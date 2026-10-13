@@ -35,7 +35,7 @@ pub fn build_epub_archive(
     output_path: String,
     date_time: Option<(u16, u8, u8, u8, u8, u8)>,
 ) -> PyResult<()> {
-    py.allow_threads(|| {
+    py.detach(|| {
         let out_path = Path::new(&output_path);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent).map_err(|e| PyIOError::new_err(e.to_string()))?;
